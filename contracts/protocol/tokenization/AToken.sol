@@ -14,13 +14,20 @@ import {IInitializableAToken} from '../../interfaces/IInitializableAToken.sol';
 import {ScaledBalanceTokenBase} from './base/ScaledBalanceTokenBase.sol';
 import {IncentivizedERC20} from './base/IncentivizedERC20.sol';
 import {EIP712Base} from './base/EIP712Base.sol';
+import {PriceEmitter} from './base/PriceEmitter.sol';
 
 /**
  * @title Aave ERC20 AToken
  * @author Aave
  * @notice Implementation of the interest bearing token for the Aave protocol
  */
-contract AToken is VersionedInitializable, ScaledBalanceTokenBase, EIP712Base, IAToken {
+contract AToken is
+  VersionedInitializable,
+  ScaledBalanceTokenBase,
+  EIP712Base,
+  IAToken,
+  PriceEmitter
+{
   using WadRayMath for uint256;
   using SafeCast for uint256;
   using GPv2SafeERC20 for IERC20;
@@ -28,7 +35,7 @@ contract AToken is VersionedInitializable, ScaledBalanceTokenBase, EIP712Base, I
   bytes32 public constant PERMIT_TYPEHASH =
     keccak256('Permit(address owner,address spender,uint256 value,uint256 nonce,uint256 deadline)');
 
-  uint256 public constant ATOKEN_REVISION = 0x1;
+  uint256 public constant ATOKEN_REVISION = 0x2;
 
   address internal _treasury;
   address internal _underlyingAsset;
@@ -88,7 +95,14 @@ contract AToken is VersionedInitializable, ScaledBalanceTokenBase, EIP712Base, I
     address onBehalfOf,
     uint256 amount,
     uint256 index
-  ) external virtual override onlyPool returns (bool) {
+  )
+    external
+    virtual
+    override
+    onlyPool
+    emitPrice(POOL, _underlyingAsset, ACTION_SUPPLY, onBehalfOf)
+    returns (bool)
+  {
     return _mintScaled(caller, onBehalfOf, amount, index);
   }
 
@@ -98,7 +112,7 @@ contract AToken is VersionedInitializable, ScaledBalanceTokenBase, EIP712Base, I
     address receiverOfUnderlying,
     uint256 amount,
     uint256 index
-  ) external virtual override onlyPool {
+  ) external virtual override onlyPool emitPrice(POOL, _underlyingAsset, ACTION_WITHDRAW, from) {
     _burnScaled(from, receiverOfUnderlying, amount, index);
     if (receiverOfUnderlying != address(this)) {
       IERC20(_underlyingAsset).safeTransfer(receiverOfUnderlying, amount);
@@ -118,7 +132,7 @@ contract AToken is VersionedInitializable, ScaledBalanceTokenBase, EIP712Base, I
     address from,
     address to,
     uint256 value
-  ) external virtual override onlyPool {
+  ) external virtual override onlyPool emitPrice(POOL, _underlyingAsset, ACTION_LIQUIDATION, from) {
     // Being a normal transfer, the Transfer() and BalanceTransfer() are emitted
     // so no need to emit a specific event here
     _transfer(from, to, value, false);
@@ -200,7 +214,12 @@ contract AToken is VersionedInitializable, ScaledBalanceTokenBase, EIP712Base, I
    * @param amount The amount getting transferred
    * @param validate True if the transfer needs to be validated, false otherwise
    */
-  function _transfer(address from, address to, uint256 amount, bool validate) internal virtual {
+  function _transfer(
+    address from,
+    address to,
+    uint256 amount,
+    bool validate
+  ) internal virtual emitPrice(POOL, _underlyingAsset, ACTION_ATOKEN_TRANSFER, from) {
     address underlyingAsset = _underlyingAsset;
 
     uint256 index = POOL.getReserveNormalizedIncome(underlyingAsset);
