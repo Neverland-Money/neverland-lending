@@ -45,14 +45,24 @@ console.log(PoolArtifact.abi);
 
 ## Neverland Changes
 
-The initial Neverland setup keeps the Aave V3 core architecture intact while adding Neverland token price-observation behavior directly to the canonical token implementations:
+The Neverland setup keeps the Aave V3 core architecture intact while applying Neverland-maintained token telemetry and rounding hardening directly to the canonical implementation contracts:
 
 - `AToken` emits `PriceObserved` on supply, transfer, withdraw, and liquidation-transfer paths.
 - `VariableDebtToken` emits `PriceObserved` on variable borrow and repay paths.
 - `PriceEmitter` centralizes the event and oracle-read helper.
 - Token implementation revisions are bumped so upgrades can distinguish the Neverland implementations from the upstream base.
+- Directional rounding is applied on scaled token accounting, reserve accounting, flash-loan premiums, liquidation accounting, and health-factor validation paths.
+- Stable-rate execution and portal/bridge entrypoints are disabled in the canonical `Pool` runtime.
 
 Neverland-specific tests live under `test-suites/neverland/`.
+
+## Runtime Boundary
+
+`Pool` is the canonical runtime entrypoint. Stable-rate execution and portal/bridge entrypoints are disabled there and covered by the Neverland test gate. Some upstream source files remain in `contracts/` for package compatibility, including `BridgeLogic`, but they are not imported or linked by the canonical `Pool` runtime.
+
+The upstream test suite is retained as provenance and comparison material. Neverland release evidence is produced by the Neverland test suite and deployment operations, not by stale upstream scenarios that still assume stable borrowing or portal execution.
+
+Live-state preflight, reserve-set checks, governance-safe export evidence, and signing-time assumptions belong to the deployment operations workflow. This core package ships contracts, artifacts, types, and local runtime gates.
 
 ## Development
 
