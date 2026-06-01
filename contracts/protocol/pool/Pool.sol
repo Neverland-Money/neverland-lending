@@ -58,14 +58,6 @@ contract Pool is VersionedInitializable, PoolStorage, IPool {
     _;
   }
 
-  /**
-   * @dev Only bridge can call functions marked by this modifier.
-   */
-  modifier onlyBridge() {
-    _onlyBridge();
-    _;
-  }
-
   function _onlyPoolConfigurator() internal view virtual {
     require(
       ADDRESSES_PROVIDER.getPoolConfigurator() == msg.sender,
@@ -77,13 +69,6 @@ contract Pool is VersionedInitializable, PoolStorage, IPool {
     require(
       IACLManager(ADDRESSES_PROVIDER.getACLManager()).isPoolAdmin(msg.sender),
       Errors.CALLER_NOT_POOL_ADMIN
-    );
-  }
-
-  function _onlyBridge() internal view virtual {
-    require(
-      IACLManager(ADDRESSES_PROVIDER.getACLManager()).isBridge(msg.sender),
-      Errors.CALLER_NOT_BRIDGE
     );
   }
 
