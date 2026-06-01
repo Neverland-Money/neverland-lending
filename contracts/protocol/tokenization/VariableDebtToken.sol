@@ -4,8 +4,8 @@ pragma solidity ^0.8.10;
 import {IERC20} from '../../dependencies/openzeppelin/contracts/IERC20.sol';
 import {SafeCast} from '../../dependencies/openzeppelin/contracts/SafeCast.sol';
 import {VersionedInitializable} from '../libraries/aave-upgradeability/VersionedInitializable.sol';
-import {WadRayMath} from '../libraries/math/WadRayMath.sol';
 import {Errors} from '../libraries/helpers/Errors.sol';
+import {TokenMath} from '../libraries/helpers/TokenMath.sol';
 import {IPool} from '../../interfaces/IPool.sol';
 import {IAaveIncentivesController} from '../../interfaces/IAaveIncentivesController.sol';
 import {IInitializableDebtToken} from '../../interfaces/IInitializableDebtToken.sol';
@@ -28,10 +28,10 @@ contract VariableDebtToken is
   IVariableDebtToken,
   PriceEmitter
 {
-  using WadRayMath for uint256;
   using SafeCast for uint256;
+  using TokenMath for uint256;
 
-  uint256 public constant DEBT_TOKEN_REVISION = 0x1;
+  uint256 public constant DEBT_TOKEN_REVISION = 0x2;
 
   /**
    * @dev Constructor.
@@ -84,13 +84,11 @@ contract VariableDebtToken is
 
   /// @inheritdoc IERC20
   function balanceOf(address user) public view virtual override returns (uint256) {
-    uint256 scaledBalance = super.balanceOf(user);
-
-    if (scaledBalance == 0) {
-      return 0;
-    }
-
-    return scaledBalance.rayMul(POOL.getReserveNormalizedVariableDebt(_underlyingAsset));
+    return
+      TokenMath.getVTokenBalance(
+        uint256(_userState[user].balance),
+        POOL.getReserveNormalizedVariableDebt(_underlyingAsset)
+      );
   }
 
   /// @inheritdoc IVariableDebtToken
@@ -107,10 +105,20 @@ contract VariableDebtToken is
     emitPrice(POOL, _underlyingAsset, ACTION_BORROW, onBehalfOf)
     returns (bool, uint256)
   {
+    uint256 amountScaled = TokenMath.getVTokenMintScaledAmount(amount, index);
+    require(amountScaled != 0, Errors.INVALID_MINT_AMOUNT);
+
     if (user != onBehalfOf) {
-      _decreaseBorrowAllowance(onBehalfOf, user, amount);
+      uint256 scaledBalanceOfOnBehalfOf = uint256(_userState[onBehalfOf].balance);
+      uint256 debtIncrease = TokenMath.getVTokenBalance(
+        scaledBalanceOfOnBehalfOf + amountScaled,
+        index
+      ) - TokenMath.getVTokenBalance(scaledBalanceOfOnBehalfOf, index);
+      _decreaseBorrowAllowanceCapped(onBehalfOf, user, amount, debtIncrease);
     }
-    return (_mintScaled(user, onBehalfOf, amount, index), scaledTotalSupply());
+
+    bool firstAction = _mintScaledV2(user, onBehalfOf, amountScaled, index);
+    return (firstAction, scaledTotalSupply());
   }
 
   /// @inheritdoc IVariableDebtToken
@@ -126,13 +134,27 @@ contract VariableDebtToken is
     emitPrice(POOL, _underlyingAsset, ACTION_REPAY, from)
     returns (uint256)
   {
-    _burnScaled(from, address(0), amount, index);
+    uint256 userScaled = uint256(_userState[from].balance);
+    uint256 amountScaled = TokenMath.getVTokenBurnScaledAmount(amount, index);
+    uint256 userBalance = TokenMath.getVTokenBalance(userScaled, index);
+
+    if (amount >= userBalance) {
+      amountScaled = userScaled;
+    }
+
+    require(amountScaled != 0, Errors.INVALID_BURN_AMOUNT);
+
+    _burnScaledV2(from, address(0), amountScaled, index);
     return scaledTotalSupply();
   }
 
   /// @inheritdoc IERC20
   function totalSupply() public view virtual override returns (uint256) {
-    return super.totalSupply().rayMul(POOL.getReserveNormalizedVariableDebt(_underlyingAsset));
+    return
+      TokenMath.getVTokenBalance(
+        scaledTotalSupply(),
+        POOL.getReserveNormalizedVariableDebt(_underlyingAsset)
+      );
   }
 
   /// @inheritdoc EIP712Base
@@ -171,5 +193,78 @@ contract VariableDebtToken is
   /// @inheritdoc IVariableDebtToken
   function UNDERLYING_ASSET_ADDRESS() external view override returns (address) {
     return _underlyingAsset;
+  }
+
+  function _mintScaledV2(
+    address caller,
+    address onBehalfOf,
+    uint256 amountScaled,
+    uint256 index
+  ) private returns (bool) {
+    uint256 scaledBalance = uint256(_userState[onBehalfOf].balance);
+    uint256 previousBalance = TokenMath.getVTokenBalance(
+      scaledBalance,
+      _userState[onBehalfOf].additionalData
+    );
+    uint256 currentBalanceAtIndex = TokenMath.getVTokenBalance(scaledBalance, index);
+    uint256 nextBalance = TokenMath.getVTokenBalance(scaledBalance + amountScaled, index);
+    uint256 balanceIncrease = currentBalanceAtIndex - previousBalance;
+    uint256 amountToMint = nextBalance - previousBalance;
+
+    _userState[onBehalfOf].additionalData = index.toUint128();
+
+    _mint(onBehalfOf, amountScaled.toUint128());
+
+    emit Transfer(address(0), onBehalfOf, amountToMint);
+    emit Mint(caller, onBehalfOf, amountToMint, balanceIncrease, index);
+
+    return (scaledBalance == 0);
+  }
+
+  function _burnScaledV2(
+    address user,
+    address target,
+    uint256 amountScaled,
+    uint256 index
+  ) private {
+    uint256 scaledBalance = uint256(_userState[user].balance);
+    uint256 previousBalance = TokenMath.getVTokenBalance(
+      scaledBalance,
+      _userState[user].additionalData
+    );
+    uint256 nextBalance = TokenMath.getVTokenBalance(scaledBalance - amountScaled, index);
+    uint256 balanceIncrease = TokenMath.getVTokenBalance(scaledBalance, index) - previousBalance;
+
+    _userState[user].additionalData = index.toUint128();
+
+    _burn(user, amountScaled.toUint128());
+
+    if (nextBalance > previousBalance) {
+      uint256 amountToMint = nextBalance - previousBalance;
+      emit Transfer(address(0), user, amountToMint);
+      emit Mint(user, user, amountToMint, balanceIncrease, index);
+    } else {
+      uint256 amountToBurn = previousBalance - nextBalance;
+      emit Transfer(user, address(0), amountToBurn);
+      emit Burn(user, target, amountToBurn, balanceIncrease, index);
+    }
+  }
+
+  function _decreaseBorrowAllowanceCapped(
+    address delegator,
+    address delegatee,
+    uint256 amount,
+    uint256 correctedAmount
+  ) private {
+    uint256 oldBorrowAllowance = _borrowAllowances[delegator][delegatee];
+    oldBorrowAllowance - amount;
+
+    uint256 consumption = oldBorrowAllowance >= correctedAmount
+      ? correctedAmount
+      : oldBorrowAllowance;
+    uint256 newAllowance = oldBorrowAllowance - consumption;
+
+    _borrowAllowances[delegator][delegatee] = newAllowance;
+    emit BorrowAllowanceDelegated(delegator, delegatee, _underlyingAsset, newAllowance);
   }
 }

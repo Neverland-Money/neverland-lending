@@ -2,6 +2,7 @@
 pragma solidity ^0.8.10;
 
 import {Context} from '../../../dependencies/openzeppelin/contracts/Context.sol';
+import {ECDSA} from '../../../dependencies/openzeppelin/contracts/ECDSA.sol';
 import {Errors} from '../../libraries/helpers/Errors.sol';
 import {VersionedInitializable} from '../../libraries/aave-upgradeability/VersionedInitializable.sol';
 import {ICreditDelegationToken} from '../../../interfaces/ICreditDelegationToken.sol';
@@ -62,7 +63,7 @@ abstract contract DebtTokenBase is
         )
       )
     );
-    require(delegator == ecrecover(digest, v, r, s), Errors.INVALID_SIGNATURE);
+    require(delegator == ECDSA.recover(digest, v, r, s), Errors.INVALID_SIGNATURE);
     _nonces[delegator] = currentValidNonce + 1;
     _approveDelegation(delegator, delegatee, value);
   }
