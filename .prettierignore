@@ -8,5 +8,4 @@ dist
 Certora
 *.json
 CHANGELOG.md
-.prettierignore
-.solcover.js
+.*

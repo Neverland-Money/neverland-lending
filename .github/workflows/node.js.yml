@@ -1,36 +1,37 @@
-name: Build
+name: CI
 
 on:
   push:
-    branches: [master]
+    branches: [main]
   pull_request:
-    branches: [master]
+    branches: [main]
+  workflow_dispatch:
 
 jobs:
-  build:
+  checks:
     runs-on: ubuntu-latest
 
-    strategy:
-      matrix:
-        node-version: [16.x]
-
     steps:
-      - uses: actions/checkout@v2
-      - name: Use Node.js ${{ matrix.node-version }}
-        uses: actions/setup-node@v3
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Use Node.js
+        uses: actions/setup-node@v4
         with:
-          node-version: ${{ matrix.node-version }}
-          scope: '@aave'
+          node-version-file: .nvmrc
+          cache: npm
+
       - name: Install dependencies
         run: npm ci
-      - name: Lint
+
+      - name: Check formatting
         run: npm run prettier:check
-      - name: Test
-        run: npm run ci:test
-      - name: Coverage
-        run: npm run coverage
-      - name: Publish coverage
-        uses: codecov/codecov-action@v1
-        with:
-          fail_ci_if_error: true
-          token: ${{ secrets.CODECOV_TOKEN }}
+
+      - name: Test Neverland suite
+        run: npm run test:neverland
+
+      - name: Build package exports
+        run: npm run build
+
+      - name: Validate npm package contents
+        run: npm pack --dry-run
