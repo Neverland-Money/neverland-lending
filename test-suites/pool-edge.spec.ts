@@ -1,6 +1,6 @@
 import { expect } from 'chai';
 import { BigNumber, BigNumberish, utils } from 'ethers';
-import { impersonateAccountsHardhat, setAutomine } from '../helpers/misc-utils';
+import { impersonateAccountsHardhat } from '../helpers/misc-utils';
 import { MAX_UINT_AMOUNT, MAX_UNBACKED_MINT_CAP, ZERO_ADDRESS } from '../helpers/constants';
 import { deployMintableERC20 } from '@aave/deploy-v3/dist/helpers/contract-deployments';
 import { ProtocolErrors, RateMode } from '../helpers/types';
@@ -28,13 +28,6 @@ import {
 } from '../types';
 import { convertToCurrencyDecimals, getProxyImplementation } from '../helpers/contracts-helpers';
 import { ethers } from 'hardhat';
-import { deposit, getTxCostAndTimestamp } from './helpers/actions';
-import AaveConfig from '@aave/deploy-v3/dist/markets/test';
-import {
-  calcExpectedReserveDataAfterDeposit,
-  configuration as calculationsConfiguration,
-} from './helpers/utils/calculations';
-import { getReserveData } from './helpers/utils/helpers';
 
 declare var hre: HardhatRuntimeEnvironment;
 
@@ -110,6 +103,7 @@ makeSuite('Pool: Edge cases', (testEnv: TestEnv) => {
     UNDERLYING_CLAIMABLE_RIGHTS_NOT_ZERO,
     SUPPLY_CAP_EXCEEDED,
     RESERVE_LIQUIDITY_NOT_ZERO,
+    STABLE_BORROWING_NOT_ENABLED,
   } = ProtocolErrors;
 
   const MAX_STABLE_RATE_BORROW_SIZE_PERCENT = 2500;
@@ -620,7 +614,7 @@ makeSuite('Pool: Edge cases', (testEnv: TestEnv) => {
         underlyingAssetDecimals: 18,
         interestRateStrategyAddress: mockRateStrategy.address,
         underlyingAsset: mockToken.address,
-        treasury: ZERO_ADDRESS,
+        treasury: poolAdmin.address,
         incentivesController: ZERO_ADDRESS,
         aTokenName: 'AMOCK',
         aTokenSymbol: 'AMOCK',
@@ -845,7 +839,7 @@ makeSuite('Pool: Edge cases', (testEnv: TestEnv) => {
         underlyingAssetDecimals: 18,
         interestRateStrategyAddress: mockRateStrategy.address,
         underlyingAsset: mockErc20.address,
-        treasury: ZERO_ADDRESS,
+        treasury: deployer.address,
         incentivesController: ZERO_ADDRESS,
         underlyingAssetName: 'MOCK',
         aTokenName: 'AMOCK',
@@ -1091,70 +1085,19 @@ makeSuite('Pool: Edge cases', (testEnv: TestEnv) => {
     expect(reserveDataAfter2.liquidityIndex).to.be.eq(reserveDataAfter1.liquidityIndex);
   });
 
-  it('LendingPool Reserve Factor 100%. Only stable borrowings. Validates that neither variable borrow index nor liquidity index increase, but the Collector receives accruedToTreasury allocation after interest accrues', async () => {
-    const {
-      configurator,
-      pool,
-      aDai,
-      dai,
-      users: [depositor],
-    } = testEnv;
-
-    await setupPositions(testEnv, RateMode.Stable);
-
-    // Set the RF to 100%
-    await configurator.setReserveFactor(dai.address, '10000');
-
-    const reserveDataBefore = await pool.getReserveData(dai.address);
-
-    await advanceTimeAndBlock(10000);
-
-    // Deposit to "settle" the liquidity index accrual from pre-RF increase to 100%
-    await pool
-      .connect(depositor.signer)
-      .deposit(
-        dai.address,
-        await convertToCurrencyDecimals(dai.address, '1'),
-        depositor.address,
-        '0'
-      );
-
-    const reserveDataAfter1 = await pool.getReserveData(dai.address);
-
-    expect(reserveDataAfter1.variableBorrowIndex).to.be.eq(reserveDataBefore.variableBorrowIndex);
-    expect(reserveDataAfter1.accruedToTreasury).to.be.gt(reserveDataBefore.accruedToTreasury);
-    expect(reserveDataAfter1.liquidityIndex).to.be.gt(reserveDataBefore.liquidityIndex);
-
-    await advanceTimeAndBlock(10000);
-
-    // "Clean" update, that should not increase the liquidity index, only stable borrow
-    await pool
-      .connect(depositor.signer)
-      .deposit(
-        dai.address,
-        await convertToCurrencyDecimals(dai.address, '1'),
-        depositor.address,
-        '0'
-      );
-
-    const reserveDataAfter2 = await pool.getReserveData(dai.address);
-
-    expect(reserveDataAfter2.variableBorrowIndex).to.be.eq(reserveDataAfter1.variableBorrowIndex);
-    expect(reserveDataAfter2.accruedToTreasury).to.be.gt(reserveDataAfter1.accruedToTreasury);
-    expect(reserveDataAfter2.liquidityIndex).to.be.eq(reserveDataAfter1.liquidityIndex);
+  it('LendingPool Reserve Factor 100%. Stable borrowing setup is disabled', async () => {
+    await expect(setupPositions(testEnv, RateMode.Stable)).to.be.revertedWith(
+      STABLE_BORROWING_NOT_ENABLED
+    );
   });
 
-  it('Pool with non-zero unbacked keeps the same liquidity and debt rate, even while setting zero unbackedMintCap', async () => {
+  it('Pool rejects unbacked minting even when bridge role and cap are configured', async () => {
     const {
       configurator,
       pool,
       dai,
-      helpersContract,
-      users: [user1, user2, user3, bridge],
+      users: [user1, , user3, bridge],
     } = testEnv;
-
-    // Set configuration of reserve params
-    calculationsConfiguration.reservesParams = AaveConfig.ReservesConfig;
 
     // User 3 supplies 1M DAI and borrows 0.25M DAI
     const daiAmount = await convertToCurrencyDecimals(dai.address, '1000000');
@@ -1178,45 +1121,8 @@ makeSuite('Pool: Edge cases', (testEnv: TestEnv) => {
     expect(await configurator.setUnbackedMintCap(dai.address, MAX_UNBACKED_MINT_CAP));
 
     // Bridge mints 1M unbacked aDAI on behalf of User 1
-    expect(
-      await pool.connect(bridge.signer).mintUnbacked(dai.address, daiAmount, user1.address, 0)
-    );
-
-    const reserveDataBefore = await getReserveData(helpersContract, dai.address);
-
-    expect(await dai.connect(user2.signer)['mint(uint256)'](daiAmount));
-    expect(await dai.connect(user2.signer).approve(pool.address, MAX_UINT_AMOUNT));
-
-    // Next two txs should be mined in the same block
-    await setAutomine(false);
-
-    // Set zero unbackedMintCap for DAI
-    expect(await configurator.setUnbackedMintCap(dai.address, 0));
-
-    // User 2 supplies 10 DAI
-    const amountToDeposit = await convertToCurrencyDecimals(dai.address, '10');
-    const tx = await pool
-      .connect(user2.signer)
-      .deposit(dai.address, amountToDeposit, user2.address, '0');
-
-    // Start mining
-    await setAutomine(true);
-
-    const rcpt = await tx.wait();
-    const { txTimestamp } = await getTxCostAndTimestamp(rcpt);
-
-    const reserveDataAfter = await getReserveData(helpersContract, dai.address);
-    const expectedReserveData = calcExpectedReserveDataAfterDeposit(
-      amountToDeposit.toString(),
-      reserveDataBefore,
-      txTimestamp
-    );
-
-    // Unbacked amount should keep constant
-    expect(reserveDataAfter.unbacked).to.be.eq(reserveDataBefore.unbacked);
-
-    expect(reserveDataAfter.liquidityRate).to.be.eq(expectedReserveData.liquidityRate);
-    expect(reserveDataAfter.variableBorrowRate).to.be.eq(expectedReserveData.variableBorrowRate);
-    expect(reserveDataAfter.stableBorrowRate).to.be.eq(expectedReserveData.stableBorrowRate);
+    await expect(
+      pool.connect(bridge.signer).mintUnbacked(dai.address, daiAmount, user1.address, 0)
+    ).to.be.revertedWith('Neverland: portal/bridge disabled');
   });
 });

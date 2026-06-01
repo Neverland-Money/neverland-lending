@@ -1,5 +1,5 @@
 import { BigNumber, Signer } from 'ethers';
-import { SelfdestructTransfer__factory } from '../../../types';
+import { ethers } from 'hardhat';
 
 export const topUpNonPayableWithEther = async (
   holder: Signer,
@@ -7,7 +7,7 @@ export const topUpNonPayableWithEther = async (
   amount: BigNumber
 ) => {
   let selfdestructContract;
-  let factory = new SelfdestructTransfer__factory(holder);
+  const factory = await ethers.getContractFactory('SelfdestructTransfer', holder);
   for (const account of accounts) {
     selfdestructContract = await factory.deploy();
     await selfdestructContract.deployed();

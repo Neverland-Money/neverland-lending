@@ -29,9 +29,7 @@ import { SignerWithAddress, TestEnv } from './make-suite';
 import chai from 'chai';
 import { ReserveData, UserReserveData } from './utils/interfaces';
 import { ContractReceipt, Wallet } from 'ethers';
-import { AToken } from '../../types/AToken';
 import { RateMode, tEthereumAddress } from '../../helpers/types';
-import { MintableERC20__factory } from '../../types';
 import { waitForTx, advanceTimeAndBlock } from '@aave/deploy-v3';
 import { getChainId } from 'hardhat';
 import { timeLatest } from '../../helpers/misc-utils';
@@ -41,6 +39,22 @@ import { BigNumber } from '@ethersproject/bignumber';
 declare var hre: HardhatRuntimeEnvironment;
 
 const { expect } = chai;
+
+const RAY_RATIO_TOLERANCE = BigNumber.from(1000000000);
+const RAY_RATIO_KEYS = new Set([
+  'borrowUsageRatio',
+  'supplyUsageRatio',
+  'liquidityRate',
+  'variableBorrowRate',
+  'averageStableBorrowRate',
+  'stableBorrowRate',
+]);
+
+const isAlmostEqual = (actualValue: BigNumber, expectedValue: BigNumber, tolerance: BigNumber) => {
+  return actualValue.gt(expectedValue)
+    ? actualValue.sub(expectedValue).lte(tolerance)
+    : expectedValue.sub(actualValue).lte(tolerance);
+};
 
 const almostEqualOrEqual = function (
   this: any,
@@ -72,15 +86,10 @@ const almostEqualOrEqual = function (
     if (actual[key] instanceof BigNumber) {
       const actualValue = <BigNumber>actual[key];
       const expectedValue = <BigNumber>expected[key];
+      const tolerance = RAY_RATIO_KEYS.has(key) ? RAY_RATIO_TOLERANCE : BigNumber.from(3);
 
       this.assert(
-        actualValue.eq(expectedValue) ||
-          actualValue.add(1).eq(expectedValue) ||
-          actualValue.eq(expectedValue.add(1)) ||
-          actualValue.add(2).eq(expectedValue) ||
-          actualValue.eq(expectedValue.add(2)) ||
-          actualValue.add(3).eq(expectedValue) ||
-          actualValue.eq(expectedValue.add(3)),
+        isAlmostEqual(actualValue, expectedValue, tolerance),
         `expected #{act} to be almost equal or equal #{exp} for property ${key}`,
         `expected #{act} to be almost equal or equal #{exp} for property ${key}`,
         expectedValue.toString(),
@@ -560,7 +569,7 @@ export const supplyWithPermit = async (
   const amountToDeposit = await convertToCurrencyDecimals(reserve, amount);
 
   const chainId = Number(await getChainId());
-  const token = new MintableERC20__factory(sender.signer).attach(reserve);
+  const token = (await getMintableERC20(reserve)).connect(sender.signer);
   const highDeadline = '100000000000000000000000000';
   const nonce = await token.nonces(sender.address);
 
@@ -694,7 +703,7 @@ export const repayWithPermit = async (
   amountToRepay = BigNumber.from(amountToRepay).toHexString();
 
   const chainId = Number(await getChainId());
-  const token = new MintableERC20__factory(user.signer).attach(reserve);
+  const token = (await getMintableERC20(reserve)).connect(user.signer);
   const nonce = await token.nonces(user.address);
 
   const msgParams = buildPermitParams(
@@ -993,7 +1002,7 @@ interface ActionData {
   reserve: string;
   reserveData: ReserveData;
   userData: UserReserveData;
-  aTokenInstance: AToken;
+  aTokenInstance: any;
 }
 
 const getDataBeforeAction = async (

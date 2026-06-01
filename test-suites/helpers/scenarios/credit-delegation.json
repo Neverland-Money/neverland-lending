@@ -127,7 +127,7 @@
       ]
     },
     {
-      "description": "User 0 delegates borrowing of 1 WETH on stable to user 2, user 2 borrows 1 WETH stable on behalf of user 0",
+      "description": "User 0 delegates stable borrowing of 1 WETH to user 2, but stable borrow execution is disabled",
       "actions": [
         {
           "name": "delegateBorrowAllowance",
@@ -149,7 +149,8 @@
             "onBehalfOf": "0",
             "borrowRateMode": "stable"
           },
-          "expected": "success"
+          "expected": "revert",
+          "revertMessage": "31"
         }
       ]
     }

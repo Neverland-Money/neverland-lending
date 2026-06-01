@@ -18,6 +18,7 @@ makeSuite('Pool Liquidation: Liquidator receiving aToken', (testEnv) => {
     INVALID_HF,
     SPECIFIED_CURRENCY_NOT_BORROWED_BY_USER,
     COLLATERAL_CANNOT_BE_LIQUIDATED,
+    STABLE_BORROWING_NOT_ENABLED,
   } = ProtocolErrors;
 
   let oracleBaseDecimals: number;
@@ -358,9 +359,15 @@ makeSuite('Pool Liquidation: Liquidator receiving aToken', (testEnv) => {
       userGlobalData.availableBorrowsBase.div(usdcPrice).percentMul(9502).toString()
     );
 
+    await expect(
+      pool
+        .connect(borrower.signer)
+        .borrow(usdc.address, amountUSDCToBorrow, RateMode.Stable, '0', borrower.address)
+    ).to.be.revertedWith(STABLE_BORROWING_NOT_ENABLED);
+
     await pool
       .connect(borrower.signer)
-      .borrow(usdc.address, amountUSDCToBorrow, RateMode.Stable, '0', borrower.address);
+      .borrow(usdc.address, amountUSDCToBorrow, RateMode.Variable, '0', borrower.address);
 
     //drops HF below 1
 
@@ -387,7 +394,7 @@ makeSuite('Pool Liquidation: Liquidator receiving aToken', (testEnv) => {
       borrower.address
     );
 
-    const amountToLiquidate = userReserveDataBefore.currentStableDebt.div(2);
+    const amountToLiquidate = userReserveDataBefore.currentVariableDebt.div(2);
 
     await pool.liquidationCall(
       weth.address,
@@ -435,8 +442,8 @@ makeSuite('Pool Liquidation: Liquidator receiving aToken', (testEnv) => {
 
     expect(userGlobalDataAfter.healthFactor).to.be.gt(oneEther, 'Invalid health factor');
 
-    expect(userReserveDataAfter.currentStableDebt).to.be.closeTo(
-      userReserveDataBefore.currentStableDebt.sub(amountToLiquidate),
+    expect(userReserveDataAfter.currentVariableDebt).to.be.closeTo(
+      userReserveDataBefore.currentVariableDebt.sub(amountToLiquidate),
       2,
       'Invalid user borrow balance after liquidation'
     );

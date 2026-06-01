@@ -889,7 +889,8 @@
             "user": "6",
             "timeTravel": "365"
           },
-          "expected": "success"
+          "expected": "revert",
+          "revertMessage": "31"
         },
         {
           "name": "mint",
@@ -918,7 +919,8 @@
             "onBehalfOf": "6",
             "borrowRateMode": "stable"
           },
-          "expected": "success"
+          "expected": "revert",
+          "revertMessage": "31"
         },
         {
           "name": "repay",

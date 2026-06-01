@@ -1,9 +1,9 @@
 {
-  "title": "Pool: Borrow/repay (stable rate) edge cases",
-  "description": "Edge test cases for the borrow function, stable mode.",
+  "title": "Pool: Borrow/repay stable-rate disabled edge cases",
+  "description": "Stable-rate execution is disabled in Neverland; edge scenarios assert the runtime gate.",
   "stories": [
     {
-      "description": "repay, burn () balanceIncrease > amount",
+      "description": "Valid stable borrow and repay requests reach the stable-disabled gate",
       "actions": [
         {
           "name": "mint",
@@ -52,7 +52,6 @@
           "name": "deposit",
           "args": {
             "reserve": "WETH",
-
             "amount": "1",
             "user": "1"
           },
@@ -67,15 +66,8 @@
             "user": "1",
             "timeTravel": "365"
           },
-          "expected": "success"
-        },
-        {
-          "name": "approve",
-          "args": {
-            "reserve": "DAI",
-            "user": "1"
-          },
-          "expected": "success"
+          "expected": "revert",
+          "revertMessage": "31"
         },
         {
           "name": "repay",
@@ -87,7 +79,8 @@
             "onBehalfOf": "1",
             "timeTravel": "365"
           },
-          "expected": "success"
+          "expected": "revert",
+          "revertMessage": "31"
         }
       ]
     }

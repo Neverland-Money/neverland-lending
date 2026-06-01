@@ -5,6 +5,7 @@ import { ZeroReserveInterestRateStrategy__factory } from '../types';
 import { TestEnv, makeSuite } from './helpers/make-suite';
 import './helpers/utils/wadraymath';
 import { MAX_UINT_AMOUNT, ZERO_ADDRESS, evmRevert, evmSnapshot } from '@aave/deploy-v3';
+import { RateMode } from '../helpers/types';
 
 makeSuite('PoolConfigurator: Set Rate Strategy', (testEnv: TestEnv) => {
   let snap: string;
@@ -45,7 +46,7 @@ makeSuite('PoolConfigurator: Set Rate Strategy', (testEnv: TestEnv) => {
     expect(
       await pool
         .connect(borrower.signer)
-        .borrow(dai.address, utils.parseEther('1'), 1, 0, borrower.address)
+        .borrow(dai.address, utils.parseEther('1'), RateMode.Variable, 0, borrower.address)
     );
 
     // PoolAdmin updates IR strategy address
@@ -80,7 +81,7 @@ makeSuite('PoolConfigurator: Set Rate Strategy', (testEnv: TestEnv) => {
     expect(
       await pool
         .connect(borrower.signer)
-        .borrow(dai.address, utils.parseEther('1'), 1, 0, borrower.address)
+        .borrow(dai.address, utils.parseEther('1'), RateMode.Variable, 0, borrower.address)
     );
 
     // Rates get updated
@@ -128,7 +129,7 @@ makeSuite('PoolConfigurator: Set Rate Strategy', (testEnv: TestEnv) => {
     expect(
       await pool
         .connect(borrower.signer)
-        .borrow(dai.address, utils.parseEther('1'), 1, 0, borrower.address)
+        .borrow(dai.address, utils.parseEther('1'), RateMode.Variable, 0, borrower.address)
     );
 
     // PoolAdmin updates IR strategy address
@@ -146,7 +147,7 @@ makeSuite('PoolConfigurator: Set Rate Strategy', (testEnv: TestEnv) => {
     await expect(
       pool
         .connect(borrower.signer)
-        .borrow(dai.address, utils.parseEther('1'), 1, 0, borrower.address)
+        .borrow(dai.address, utils.parseEther('1'), RateMode.Variable, 0, borrower.address)
     ).reverted;
   });
 
@@ -199,9 +200,7 @@ makeSuite('PoolConfigurator: Set Rate Strategy', (testEnv: TestEnv) => {
       addressesProvider,
       weth,
       dai,
-      variableDebtDai,
-      stableDebtDai,
-      users: [depositor, borrower, stableBorrower],
+      users: [depositor, borrower, secondBorrower],
     } = testEnv;
 
     const zeroStrategy = await new ZeroReserveInterestRateStrategy__factory(deployer.signer).deploy(
@@ -224,23 +223,23 @@ makeSuite('PoolConfigurator: Set Rate Strategy', (testEnv: TestEnv) => {
     expect(
       await pool
         .connect(borrower.signer)
-        .borrow(dai.address, utils.parseEther('1'), 2, 0, borrower.address)
+        .borrow(dai.address, utils.parseEther('1'), RateMode.Variable, 0, borrower.address)
     );
     expect(
       await weth
-        .connect(stableBorrower.signer)
-        ['mint(address,uint256)'](stableBorrower.address, mintedAmount)
+        .connect(secondBorrower.signer)
+        ['mint(address,uint256)'](secondBorrower.address, mintedAmount)
     );
-    expect(await weth.connect(stableBorrower.signer).approve(pool.address, MAX_UINT_AMOUNT));
+    expect(await weth.connect(secondBorrower.signer).approve(pool.address, MAX_UINT_AMOUNT));
     expect(
       await pool
-        .connect(stableBorrower.signer)
-        .deposit(weth.address, mintedAmount, stableBorrower.address, 0)
+        .connect(secondBorrower.signer)
+        .deposit(weth.address, mintedAmount, secondBorrower.address, 0)
     );
     expect(
       await pool
-        .connect(stableBorrower.signer)
-        .borrow(dai.address, utils.parseEther('1'), 1, 0, stableBorrower.address)
+        .connect(secondBorrower.signer)
+        .borrow(dai.address, utils.parseEther('1'), RateMode.Variable, 0, secondBorrower.address)
     );
 
     // PoolAdmin updates IR strategy address
@@ -273,7 +272,7 @@ makeSuite('PoolConfigurator: Set Rate Strategy', (testEnv: TestEnv) => {
     expect(
       await pool
         .connect(borrower.signer)
-        .borrow(dai.address, utils.parseEther('1'), 1, 0, borrower.address)
+        .borrow(dai.address, utils.parseEther('1'), RateMode.Variable, 0, borrower.address)
     );
 
     // Rates get updated
@@ -293,19 +292,5 @@ makeSuite('PoolConfigurator: Set Rate Strategy', (testEnv: TestEnv) => {
     expect(reserveDataUpdated.currentLiquidityRate).to.be.eq(0);
     expect(reserveDataUpdated.currentVariableBorrowRate).to.be.eq(0);
     expect(reserveDataUpdated.currentStableBorrowRate).to.be.eq(0);
-
-    // Stable borrow gets rebalanced
-    await expect(
-      pool.connect(depositor.signer).rebalanceStableBorrowRate(dai.address, stableBorrower.address)
-    )
-      .to.emit(pool, 'RebalanceStableBorrowRate')
-      .withArgs(dai.address, stableBorrower.address);
-
-    // Stable borrow can be rebalanced as many times the rebalancer likes
-    await expect(
-      pool.connect(depositor.signer).rebalanceStableBorrowRate(dai.address, stableBorrower.address)
-    )
-      .to.emit(pool, 'RebalanceStableBorrowRate')
-      .withArgs(dai.address, stableBorrower.address);
   });
 });

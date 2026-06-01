@@ -3,16 +3,19 @@ import { utils } from 'ethers';
 import { ProtocolErrors, RateMode } from '../helpers/types';
 import { MAX_UINT_AMOUNT } from '../helpers/constants';
 import { convertToCurrencyDecimals } from '../helpers/contracts-helpers';
-import { MockFlashLoanReceiver } from '../types/MockFlashLoanReceiver';
 import { getMockFlashLoanReceiver } from '@aave/deploy-v3/dist/helpers/contract-getters';
 import { makeSuite, TestEnv } from './helpers/make-suite';
 import './helpers/utils/wadraymath';
 
 makeSuite('PausableReserve', (testEnv: TestEnv) => {
-  let _mockFlashLoanReceiver = {} as MockFlashLoanReceiver;
+  let _mockFlashLoanReceiver: any;
 
-  const { RESERVE_PAUSED, INVALID_FROM_BALANCE_AFTER_TRANSFER, INVALID_TO_BALANCE_AFTER_TRANSFER } =
-    ProtocolErrors;
+  const {
+    RESERVE_PAUSED,
+    INVALID_FROM_BALANCE_AFTER_TRANSFER,
+    INVALID_TO_BALANCE_AFTER_TRANSFER,
+    STABLE_BORROWING_NOT_ENABLED,
+  } = ProtocolErrors;
 
   before(async () => {
     _mockFlashLoanReceiver = await getMockFlashLoanReceiver();
@@ -127,7 +130,7 @@ makeSuite('PausableReserve', (testEnv: TestEnv) => {
 
     // Try to execute liquidation
     await expect(
-      pool.connect(user.signer).borrow(dai.address, '1', '1', '0', user.address)
+      pool.connect(user.signer).borrow(dai.address, '1', RateMode.Variable, '0', user.address)
     ).to.be.revertedWith(RESERVE_PAUSED);
 
     // Unpause the pool
@@ -143,7 +146,7 @@ makeSuite('PausableReserve', (testEnv: TestEnv) => {
 
     // Try to execute liquidation
     await expect(
-      pool.connect(user.signer).repay(dai.address, '1', '1', user.address)
+      pool.connect(user.signer).repay(dai.address, '1', RateMode.Variable, user.address)
     ).to.be.revertedWith(RESERVE_PAUSED);
 
     // Unpause the pool
@@ -225,9 +228,15 @@ makeSuite('PausableReserve', (testEnv: TestEnv) => {
       userGlobalData.availableBorrowsBase.div(usdcPrice).percentMul(9502).toString()
     );
 
+    await expect(
+      pool
+        .connect(borrower.signer)
+        .borrow(usdc.address, amountUSDCToBorrow, RateMode.Stable, '0', borrower.address)
+    ).to.be.revertedWith(STABLE_BORROWING_NOT_ENABLED);
+
     await pool
       .connect(borrower.signer)
-      .borrow(usdc.address, amountUSDCToBorrow, RateMode.Stable, '0', borrower.address);
+      .borrow(usdc.address, amountUSDCToBorrow, RateMode.Variable, '0', borrower.address);
 
     // Drops HF below 1
     await oracle.setAssetPrice(usdc.address, usdcPrice.percentMul(12000));
@@ -241,7 +250,7 @@ makeSuite('PausableReserve', (testEnv: TestEnv) => {
       borrower.address
     );
 
-    const amountToLiquidate = userReserveDataBefore.currentStableDebt.div(2);
+    const amountToLiquidate = userReserveDataBefore.currentVariableDebt.div(2);
 
     // Pause pool
     await configurator.connect(users[1].signer).setReservePause(usdc.address, true);
@@ -275,10 +284,10 @@ makeSuite('PausableReserve', (testEnv: TestEnv) => {
     // Pause pool
     await configurator.connect(users[1].signer).setReservePause(usdc.address, true);
 
-    // Try to repay
+    // Stable-rate mode swaps are disabled before pause-state validation.
     await expect(
       pool.connect(user.signer).swapBorrowRateMode(usdc.address, RateMode.Stable)
-    ).to.be.revertedWith(RESERVE_PAUSED);
+    ).to.be.revertedWith(STABLE_BORROWING_NOT_ENABLED);
 
     // Unpause pool
     await configurator.connect(users[1].signer).setReservePause(usdc.address, false);
@@ -292,7 +301,7 @@ makeSuite('PausableReserve', (testEnv: TestEnv) => {
 
     await expect(
       pool.connect(user.signer).rebalanceStableBorrowRate(dai.address, user.address)
-    ).to.be.revertedWith(RESERVE_PAUSED);
+    ).to.be.revertedWith(STABLE_BORROWING_NOT_ENABLED);
 
     // Unpause pool
     await configurator.connect(users[1].signer).setReservePause(dai.address, false);

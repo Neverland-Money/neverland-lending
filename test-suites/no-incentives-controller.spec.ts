@@ -1,7 +1,7 @@
 import { expect } from 'chai';
-import { BigNumberish } from 'ethers';
+import { BigNumberish, utils } from 'ethers';
 import { MAX_UINT_AMOUNT, ZERO_ADDRESS } from '../helpers/constants';
-import { RateMode } from '../helpers/types';
+import { ProtocolErrors, RateMode } from '../helpers/types';
 import {
   AToken__factory,
   ERC20,
@@ -15,13 +15,15 @@ import { getFirstSigner } from '@aave/deploy-v3/dist/helpers/utilities/signer';
 import { makeSuite } from './helpers/make-suite';
 import { convertToCurrencyDecimals } from '../helpers/contracts-helpers';
 import { setBlocktime, timeLatest } from '../helpers/misc-utils';
-import { config } from 'process';
 
 makeSuite('Reserve Without Incentives Controller', (testEnv) => {
+  const { STABLE_BORROWING_NOT_ENABLED } = ProtocolErrors;
+
   let mockToken: MintableERC20;
   let aMockToken: ERC20;
   let mockStableDebt: ERC20;
   let mockVariableDebt: ERC20;
+  const mockUnits = (amount: string) => utils.parseEther(amount);
 
   before(async () => {
     const { pool, poolAdmin, configurator, dai, helpersContract } = testEnv;
@@ -71,7 +73,7 @@ makeSuite('Reserve Without Incentives Controller', (testEnv) => {
         underlyingAssetDecimals: 18,
         interestRateStrategyAddress: interestRateStrategyAddress,
         underlyingAsset: mockToken.address,
-        treasury: ZERO_ADDRESS,
+        treasury: poolAdmin.address,
         incentivesController: ZERO_ADDRESS,
         aTokenName: 'AMOCK',
         aTokenSymbol: 'AMOCK',
@@ -159,22 +161,11 @@ makeSuite('Reserve Without Incentives Controller', (testEnv) => {
 
     expect(await aMockToken.balanceOf(user.address)).to.be.eq(0);
 
-    await mockToken
-      .connect(user.signer)
-      ['mint(uint256)'](await convertToCurrencyDecimals(mockToken.address, '10000'));
+    await mockToken.connect(user.signer)['mint(uint256)'](mockUnits('10000'));
     await mockToken.connect(user.signer).approve(pool.address, MAX_UINT_AMOUNT);
-    await pool
-      .connect(user.signer)
-      .deposit(
-        mockToken.address,
-        await convertToCurrencyDecimals(mockToken.address, '1000'),
-        user.address,
-        0
-      );
+    await pool.connect(user.signer).deposit(mockToken.address, mockUnits('1000'), user.address, 0);
 
-    expect(await aMockToken.balanceOf(user.address)).to.be.eq(
-      await convertToCurrencyDecimals(aMockToken.address, '1000')
-    );
+    expect(await aMockToken.balanceOf(user.address)).to.be.eq(mockUnits('1000'));
   });
 
   it('Transfer aMock tokens', async () => {
@@ -182,21 +173,15 @@ makeSuite('Reserve Without Incentives Controller', (testEnv) => {
       users: [sender, receiver],
     } = testEnv;
 
-    expect(await aMockToken.balanceOf(sender.address)).to.be.eq(
-      await convertToCurrencyDecimals(aMockToken.address, '1000')
-    );
+    expect(await aMockToken.balanceOf(sender.address)).to.be.eq(mockUnits('1000'));
     expect(await aMockToken.balanceOf(receiver.address)).to.be.eq(0);
 
-    await aMockToken
-      .connect(sender.signer)
-      .transfer(receiver.address, await convertToCurrencyDecimals(aMockToken.address, '1000'));
+    await aMockToken.connect(sender.signer).transfer(receiver.address, mockUnits('1000'));
     expect(await aMockToken.balanceOf(sender.address)).to.be.eq(0);
-    expect(await aMockToken.balanceOf(receiver.address)).to.be.eq(
-      await convertToCurrencyDecimals(aMockToken.address, '1000')
-    );
+    expect(await aMockToken.balanceOf(receiver.address)).to.be.eq(mockUnits('1000'));
   });
 
-  it('Borrow mock tokens with stable rate', async () => {
+  it('Rejects stable borrow and borrows mock tokens with variable rate', async () => {
     const {
       pool,
       users: [, , user],
@@ -215,24 +200,22 @@ makeSuite('Reserve Without Incentives Controller', (testEnv) => {
     await pool
       .connect(user.signer)
       .deposit(dai.address, await convertToCurrencyDecimals(dai.address, '10000'), user.address, 0);
+    const borrowAmount = mockUnits('100');
+
+    await expect(
+      pool
+        .connect(user.signer)
+        .borrow(mockToken.address, borrowAmount, RateMode.Stable, 0, user.address)
+    ).to.be.revertedWith(STABLE_BORROWING_NOT_ENABLED);
+
     await pool
       .connect(user.signer)
-      .borrow(
-        mockToken.address,
-        await convertToCurrencyDecimals(mockToken.address, '100'),
-        RateMode.Stable,
-        0,
-        user.address
-      );
+      .borrow(mockToken.address, borrowAmount, RateMode.Variable, 0, user.address);
 
     expect(await aMockToken.balanceOf(user.address)).to.be.eq(0);
-    expect(await mockToken.balanceOf(user.address)).to.be.eq(
-      await convertToCurrencyDecimals(mockToken.address, '100')
-    );
-    expect(await mockVariableDebt.balanceOf(user.address)).to.be.eq(0);
-    expect(await mockStableDebt.balanceOf(user.address)).to.be.eq(
-      await convertToCurrencyDecimals(mockStableDebt.address, '100')
-    );
+    expect(await mockToken.balanceOf(user.address)).to.be.eq(borrowAmount);
+    expect(await mockVariableDebt.balanceOf(user.address)).to.be.eq(borrowAmount);
+    expect(await mockStableDebt.balanceOf(user.address)).to.be.eq(0);
   });
 
   it('Repay mock tokens', async () => {
@@ -241,16 +224,14 @@ makeSuite('Reserve Without Incentives Controller', (testEnv) => {
       users: [, , user],
     } = testEnv;
 
-    const mintAmount = await convertToCurrencyDecimals(mockToken.address, '100');
+    const mintAmount = mockUnits('100');
     await mockToken.connect(user.signer)['mint(uint256)'](mintAmount);
 
-    const expectedMockTokenBalance = mintAmount.add(
-      await convertToCurrencyDecimals(mockToken.address, '100')
-    );
+    const expectedMockTokenBalance = mintAmount.add(mockUnits('100'));
 
     expect(await aMockToken.balanceOf(user.address)).to.be.eq(0);
     expect(await mockToken.balanceOf(user.address)).to.be.eq(expectedMockTokenBalance);
-    expect(await mockVariableDebt.balanceOf(user.address)).to.be.eq(0);
+    expect(await mockVariableDebt.balanceOf(user.address)).to.be.gt(0);
 
     await mockToken.connect(user.signer).approve(pool.address, MAX_UINT_AMOUNT);
 
@@ -258,16 +239,23 @@ makeSuite('Reserve Without Incentives Controller', (testEnv) => {
 
     await setBlocktime(time.add(1).toNumber());
 
-    const stableDebtBefore = await mockStableDebt.balanceOf(user.address, { blockTag: 'pending' });
+    const variableDebtBefore = await mockVariableDebt.balanceOf(user.address, {
+      blockTag: 'pending',
+    });
+    const mockTokenBalanceBeforeRepay = await mockToken.balanceOf(user.address);
+
+    await expect(
+      pool
+        .connect(user.signer)
+        .repay(mockToken.address, variableDebtBefore, RateMode.Stable, user.address)
+    ).to.be.revertedWith(STABLE_BORROWING_NOT_ENABLED);
 
     await pool
       .connect(user.signer)
-      .repay(mockToken.address, stableDebtBefore, RateMode.Stable, user.address);
+      .repay(mockToken.address, MAX_UINT_AMOUNT, RateMode.Variable, user.address);
 
     expect(await aMockToken.balanceOf(user.address)).to.be.eq(0);
-    expect(await mockToken.balanceOf(user.address)).to.be.eq(
-      expectedMockTokenBalance.sub(stableDebtBefore)
-    );
+    expect(await mockToken.balanceOf(user.address)).to.be.lt(mockTokenBalanceBeforeRepay);
     expect(await mockVariableDebt.balanceOf(user.address)).to.be.eq(0);
     expect(await mockStableDebt.balanceOf(user.address)).to.be.eq(0);
   });

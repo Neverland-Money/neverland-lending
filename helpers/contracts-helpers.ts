@@ -9,8 +9,11 @@ import { InitializableImmutableAdminUpgradeabilityProxy } from '../types';
 
 declare var hre: HardhatRuntimeEnvironment;
 
+const IERC20_DETAILED_ARTIFACT =
+  'contracts/dependencies/openzeppelin/contracts/IERC20Detailed.sol:IERC20Detailed';
+
 export const convertToCurrencyDecimals = async (tokenAddress: tEthereumAddress, amount: string) => {
-  const token = await getContract('IERC20Detailed', tokenAddress);
+  const token = await getContract(IERC20_DETAILED_ARTIFACT, tokenAddress);
   let decimals = (await token.decimals()).toString();
 
   return ethers.utils.parseUnits(amount, decimals);

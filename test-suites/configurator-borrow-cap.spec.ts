@@ -48,7 +48,7 @@ makeSuite('PoolConfigurator: Borrow Cap', (testEnv: TestEnv) => {
     expect(daiBorrowCap).to.be.equal('0');
   });
 
-  it('Borrows 10 stable DAI, 10 variable USDC', async () => {
+  it('Borrows 10 variable DAI, 10 variable USDC', async () => {
     const {
       weth,
       pool,
@@ -98,7 +98,7 @@ makeSuite('PoolConfigurator: Borrow Cap', (testEnv: TestEnv) => {
       await pool.borrow(
         usdc.address,
         await convertToCurrencyDecimals(usdc.address, borrowedAmount),
-        2,
+        RateMode.Variable,
         0,
         deployer.address
       )
@@ -108,7 +108,7 @@ makeSuite('PoolConfigurator: Borrow Cap', (testEnv: TestEnv) => {
       await pool.borrow(
         dai.address,
         await convertToCurrencyDecimals(dai.address, borrowedAmount),
-        1,
+        RateMode.Variable,
         0,
         deployer.address
       )
@@ -136,7 +136,7 @@ makeSuite('PoolConfigurator: Borrow Cap', (testEnv: TestEnv) => {
     expect(daiBorrowCap).to.be.equal(newCap);
   });
 
-  it('Tries to borrow any DAI or USDC, stable or variable, (> BORROW_CAP) (revert expected)', async () => {
+  it('Tries to borrow any DAI or USDC (> BORROW_CAP) (revert expected)', async () => {
     const { usdc, pool, dai, deployer } = testEnv;
     const borrowedAmount = '10';
 
@@ -144,7 +144,7 @@ makeSuite('PoolConfigurator: Borrow Cap', (testEnv: TestEnv) => {
       pool.borrow(
         usdc.address,
         await convertToCurrencyDecimals(usdc.address, borrowedAmount),
-        2,
+        RateMode.Variable,
         0,
         deployer.address
       )
@@ -154,7 +154,7 @@ makeSuite('PoolConfigurator: Borrow Cap', (testEnv: TestEnv) => {
       pool.borrow(
         dai.address,
         await convertToCurrencyDecimals(dai.address, borrowedAmount),
-        2,
+        RateMode.Variable,
         0,
         deployer.address
       )
@@ -194,7 +194,7 @@ makeSuite('PoolConfigurator: Borrow Cap', (testEnv: TestEnv) => {
     expect(daiBorrowCap).to.be.equal(newCap);
   });
 
-  it('Borrows 10 stable DAI and 10 variable USDC', async () => {
+  it('Borrows 10 variable DAI and 10 variable USDC', async () => {
     const { usdc, pool, dai, deployer } = testEnv;
 
     const borrowedAmount = '10';
@@ -202,7 +202,7 @@ makeSuite('PoolConfigurator: Borrow Cap', (testEnv: TestEnv) => {
       await pool.borrow(
         usdc.address,
         await convertToCurrencyDecimals(usdc.address, borrowedAmount),
-        2,
+        RateMode.Variable,
         0,
         deployer.address
       )
@@ -212,7 +212,7 @@ makeSuite('PoolConfigurator: Borrow Cap', (testEnv: TestEnv) => {
       await pool.borrow(
         dai.address,
         await convertToCurrencyDecimals(dai.address, borrowedAmount),
-        1,
+        RateMode.Variable,
         0,
         deployer.address
       )
@@ -276,7 +276,7 @@ makeSuite('PoolConfigurator: Borrow Cap', (testEnv: TestEnv) => {
     ).to.be.revertedWith(BORROW_CAP_EXCEEDED);
   });
 
-  it('Borrows 99 variable DAI and 99 stable USDC (< BORROW_CAP)', async () => {
+  it('Borrows 99 variable DAI and 99 variable USDC (< BORROW_CAP)', async () => {
     const { usdc, pool, dai, deployer } = testEnv;
 
     const borrowedAmount = '99';
@@ -284,7 +284,7 @@ makeSuite('PoolConfigurator: Borrow Cap', (testEnv: TestEnv) => {
       await pool.borrow(
         usdc.address,
         await convertToCurrencyDecimals(usdc.address, borrowedAmount),
-        2,
+        RateMode.Variable,
         0,
         deployer.address
       )
@@ -294,7 +294,7 @@ makeSuite('PoolConfigurator: Borrow Cap', (testEnv: TestEnv) => {
       await pool.borrow(
         dai.address,
         await convertToCurrencyDecimals(dai.address, borrowedAmount),
-        1,
+        RateMode.Variable,
         0,
         deployer.address
       )
@@ -322,7 +322,7 @@ makeSuite('PoolConfigurator: Borrow Cap', (testEnv: TestEnv) => {
     expect(daiBorrowCap).to.be.equal(newCap);
   });
 
-  it('Borrows 100 variable DAI and 100 stable USDC (< BORROW_CAP)', async () => {
+  it('Borrows 100 variable DAI and 100 variable USDC (< BORROW_CAP)', async () => {
     const { usdc, pool, dai, deployer } = testEnv;
 
     const borrowedAmount = '100';
@@ -330,7 +330,7 @@ makeSuite('PoolConfigurator: Borrow Cap', (testEnv: TestEnv) => {
       await pool.borrow(
         usdc.address,
         await convertToCurrencyDecimals(usdc.address, borrowedAmount),
-        1,
+        RateMode.Variable,
         0,
         deployer.address
       )
@@ -340,7 +340,7 @@ makeSuite('PoolConfigurator: Borrow Cap', (testEnv: TestEnv) => {
       await pool.borrow(
         dai.address,
         await convertToCurrencyDecimals(dai.address, borrowedAmount),
-        2,
+        RateMode.Variable,
         0,
         deployer.address
       )
@@ -368,7 +368,7 @@ makeSuite('PoolConfigurator: Borrow Cap', (testEnv: TestEnv) => {
     expect(daiBorrowCap).to.be.equal(newCap);
   });
 
-  it('Tries to borrows 100 variable DAI and 100 stable USDC (> BORROW_CAP) (revert expected)', async () => {
+  it('Tries to borrow 100 variable DAI and 100 variable USDC (> BORROW_CAP) (revert expected)', async () => {
     const { usdc, pool, dai, deployer } = testEnv;
 
     const borrowedAmount = '100';
@@ -376,7 +376,7 @@ makeSuite('PoolConfigurator: Borrow Cap', (testEnv: TestEnv) => {
       pool.borrow(
         usdc.address,
         await convertToCurrencyDecimals(usdc.address, borrowedAmount),
-        1,
+        RateMode.Variable,
         0,
         deployer.address
       )
@@ -386,7 +386,7 @@ makeSuite('PoolConfigurator: Borrow Cap', (testEnv: TestEnv) => {
       pool.borrow(
         dai.address,
         await convertToCurrencyDecimals(dai.address, borrowedAmount),
-        2,
+        RateMode.Variable,
         0,
         deployer.address
       )
@@ -414,7 +414,7 @@ makeSuite('PoolConfigurator: Borrow Cap', (testEnv: TestEnv) => {
     expect(daiBorrowCap).to.be.equal(newCap);
   });
 
-  it('Borrows 100 variable DAI and 100 stable USDC (< BORROW_CAP)', async () => {
+  it('Borrows 100 variable DAI and 100 variable USDC (< BORROW_CAP)', async () => {
     const { usdc, pool, dai, deployer } = testEnv;
 
     const borrowedAmount = '100';
@@ -422,7 +422,7 @@ makeSuite('PoolConfigurator: Borrow Cap', (testEnv: TestEnv) => {
       await pool.borrow(
         usdc.address,
         await convertToCurrencyDecimals(usdc.address, borrowedAmount),
-        1,
+        RateMode.Variable,
         0,
         deployer.address
       )
@@ -431,7 +431,7 @@ makeSuite('PoolConfigurator: Borrow Cap', (testEnv: TestEnv) => {
       await pool.borrow(
         dai.address,
         await convertToCurrencyDecimals(dai.address, borrowedAmount),
-        2,
+        RateMode.Variable,
         0,
         deployer.address
       )

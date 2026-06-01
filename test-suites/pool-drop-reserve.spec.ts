@@ -2,16 +2,15 @@ import { expect } from 'chai';
 import { utils } from 'ethers';
 import { ProtocolErrors } from '../helpers/types';
 import { MAX_UINT_AMOUNT, ZERO_ADDRESS } from '../helpers/constants';
-import { MockFlashLoanReceiver } from '../types/MockFlashLoanReceiver';
 import { getMockFlashLoanReceiver } from '@aave/deploy-v3/dist/helpers/contract-getters';
 import { makeSuite, TestEnv } from './helpers/make-suite';
 
 makeSuite('Pool: Drop Reserve', (testEnv: TestEnv) => {
-  let _mockFlashLoanReceiver = {} as MockFlashLoanReceiver;
+  let _mockFlashLoanReceiver: any;
 
   const {
     UNDERLYING_CLAIMABLE_RIGHTS_NOT_ZERO,
-    STABLE_DEBT_NOT_ZERO,
+    STABLE_BORROWING_NOT_ENABLED,
     VARIABLE_DEBT_SUPPLY_NOT_ZERO,
     ASSET_NOT_LISTED,
     ZERO_ADDRESS_NOT_VALID,
@@ -21,7 +20,7 @@ makeSuite('Pool: Drop Reserve', (testEnv: TestEnv) => {
     _mockFlashLoanReceiver = await getMockFlashLoanReceiver();
   });
 
-  it('User 1 deposits DAI, User 2 borrow DAI stable and variable, should fail to drop DAI reserve', async () => {
+  it('User 1 deposits DAI, User 2 borrows DAI variable, should fail to drop DAI reserve', async () => {
     const {
       deployer,
       users: [user1],
@@ -56,8 +55,9 @@ makeSuite('Pool: Drop Reserve', (testEnv: TestEnv) => {
     await expect(configurator.dropReserve(dai.address)).to.be.revertedWith(
       VARIABLE_DEBT_SUPPLY_NOT_ZERO
     );
-    await pool.connect(user1.signer).borrow(dai.address, borrowedAmount, 1, 0, user1.address);
-    await expect(configurator.dropReserve(dai.address)).to.be.revertedWith(STABLE_DEBT_NOT_ZERO);
+    await expect(
+      pool.connect(user1.signer).borrow(dai.address, borrowedAmount, 1, 0, user1.address)
+    ).to.be.revertedWith(STABLE_BORROWING_NOT_ENABLED);
   });
 
   it('User 2 repays debts, drop DAI reserve should fail', async () => {
@@ -67,7 +67,9 @@ makeSuite('Pool: Drop Reserve', (testEnv: TestEnv) => {
       dai,
       configurator,
     } = testEnv;
-    expect(await pool.connect(user1.signer).repay(dai.address, MAX_UINT_AMOUNT, 1, user1.address));
+    await expect(
+      pool.connect(user1.signer).repay(dai.address, MAX_UINT_AMOUNT, 1, user1.address)
+    ).to.be.revertedWith(STABLE_BORROWING_NOT_ENABLED);
     await expect(configurator.dropReserve(dai.address)).to.be.revertedWith(
       VARIABLE_DEBT_SUPPLY_NOT_ZERO
     );

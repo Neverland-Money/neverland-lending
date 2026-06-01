@@ -209,7 +209,7 @@ makeSuite('AToken: Transfer', (testEnv: TestEnv) => {
     expect(
       await pool
         .connect(users[1].signer)
-        .borrow(weth.address, amountWETHtoBorrow, RateMode.Stable, '0', users[1].address)
+        .borrow(weth.address, amountWETHtoBorrow, RateMode.Variable, '0', users[1].address)
     );
 
     const userReserveData = await helpersContract.getUserReserveData(
@@ -217,7 +217,7 @@ makeSuite('AToken: Transfer', (testEnv: TestEnv) => {
       users[1].address
     );
 
-    expect(userReserveData.currentStableDebt.toString()).to.be.eq(amountWETHtoBorrow);
+    expect(userReserveData.currentVariableDebt.toString()).to.be.eq(amountWETHtoBorrow);
   });
 
   it('User 1 tries to transfer all the DAI used as collateral back to user 0 (revert expected)', async () => {
