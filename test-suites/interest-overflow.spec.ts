@@ -23,7 +23,7 @@ import { evmSnapshot, evmRevert, increaseTime } from '@aave/deploy-v3';
 
 declare var hre: HardhatRuntimeEnvironment;
 makeSuite('Interest Rate and Index Overflow', (testEnv) => {
-  const { SAFECAST_UINT128_OVERFLOW } = ProtocolErrors;
+  const { INVALID_AMOUNT, SAFECAST_UINT128_OVERFLOW } = ProtocolErrors;
 
   let mockToken: MintableERC20;
   let mockStableDebtToken: StableDebtToken;
@@ -79,7 +79,7 @@ makeSuite('Interest Rate and Index Overflow', (testEnv) => {
         underlyingAssetDecimals: 18,
         interestRateStrategyAddress: mockRateStrategy.address,
         underlyingAsset: mockToken.address,
-        treasury: ZERO_ADDRESS,
+        treasury: poolAdmin.address,
         incentivesController: ZERO_ADDRESS,
         aTokenName: 'AMOCK',
         aTokenSymbol: 'AMOCK',
@@ -356,7 +356,7 @@ makeSuite('Interest Rate and Index Overflow', (testEnv) => {
     ).to.be.revertedWith(SAFECAST_UINT128_OVERFLOW);
   });
 
-  it('ReserveLogic `cumulateToLiquidityIndex` with liquidityIndex > type(uint128).max (revert expected)', async () => {
+  it('Flashloan rejects direct-transfer liquidity before `cumulateToLiquidityIndex` overflow', async () => {
     const {
       pool,
       users: [user],
@@ -389,7 +389,7 @@ makeSuite('Interest Rate and Index Overflow', (testEnv) => {
           '0x00',
           0
         )
-    ).to.be.revertedWith(SAFECAST_UINT128_OVERFLOW);
+    ).to.be.revertedWith(INVALID_AMOUNT);
   });
 
   it('StableDebtToken `mint` with nextStableRate > type(uint128).max (revert expected)', async () => {

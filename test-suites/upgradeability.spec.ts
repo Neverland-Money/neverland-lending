@@ -377,7 +377,7 @@ makeSuite('Upgradeability', (testEnv: TestEnv) => {
     });
 
     it('Tries to update the DAI Atoken implementation with a different address than the poolManager', async () => {
-      const { dai, configurator, users } = testEnv;
+      const { dai, configurator, poolAdmin, users } = testEnv;
 
       const name = await (await getAToken(newATokenAddress)).name();
       const symbol = await (await getAToken(newATokenAddress)).symbol();
@@ -392,7 +392,7 @@ makeSuite('Upgradeability', (testEnv: TestEnv) => {
         params: string;
       } = {
         asset: dai.address,
-        treasury: ZERO_ADDRESS,
+        treasury: poolAdmin.address,
         incentivesController: ZERO_ADDRESS,
         name: name,
         symbol: symbol,
@@ -405,7 +405,7 @@ makeSuite('Upgradeability', (testEnv: TestEnv) => {
     });
 
     it('Upgrades the DAI Atoken implementation ', async () => {
-      const { dai, configurator, aDai } = testEnv;
+      const { dai, configurator, aDai, poolAdmin } = testEnv;
 
       const name = await (await getAToken(newATokenAddress)).name();
       const symbol = await (await getAToken(newATokenAddress)).symbol();
@@ -420,7 +420,7 @@ makeSuite('Upgradeability', (testEnv: TestEnv) => {
         params: string;
       } = {
         asset: dai.address,
-        treasury: ZERO_ADDRESS,
+        treasury: poolAdmin.address,
         incentivesController: ZERO_ADDRESS,
         name: name,
         symbol: symbol,

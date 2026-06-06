@@ -380,7 +380,7 @@ makeSuite('EfficiencyMode', (testEnv: TestEnv) => {
         .borrow(
           usdc.address,
           await convertToCurrencyDecimals(usdc.address, '5'),
-          RateMode.Stable,
+          RateMode.Variable,
           0,
           user0.address
         )

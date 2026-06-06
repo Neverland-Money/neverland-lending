@@ -1,19 +1,26 @@
 #!/bin/bash
 
 # @dev
-# This bash script setups the needed artifacts to use
+# This bash script sets up the needed artifacts to use
 # the @aave/deploy-v3 package as source of deployment
 # scripts for testing or coverage purposes.
 #
-# A separate  artifacts directory was created 
-# due at running tests all external artifacts
-# located at /artifacts are deleted,  causing
+# A separate artifacts directory was created
+# because running tests deletes external artifacts
+# located at /artifacts, causing
 # the deploy library to not find the external
-# artifacts. 
+# artifacts.
 
 echo "[BASH] Setting up testnet environment"
 
-if [ ! "$COVERAGE" = true ]; then
+# Export market variables before compilation, because Hardhat config reads them
+# while loading deployment tasks and market configuration.
+export MARKET_NAME="Test"
+export ENABLE_REWARDS="false"
+
+if [ "$SKIP_TEST_SETUP_COMPILE" = true ]; then
+    echo "[BASH] Reusing existing compilation artifacts"
+elif [ ! "$COVERAGE" = true ]; then
     # remove hardhat and artifacts cache
     npm run ci:clean
 
@@ -24,7 +31,7 @@ else
 fi
 
 # Copy artifacts into separate directory to allow
-# the hardhat-deploy library load all artifacts without duplicates 
+# the hardhat-deploy library load all artifacts without duplicates
 mkdir -p temp-artifacts
 cp -r artifacts/* temp-artifacts
 
@@ -35,8 +42,9 @@ cp -r node_modules/@aave/periphery-v3/artifacts/contracts/* temp-artifacts/perip
 # Import external @aave/deploy artifacts
 mkdir -p temp-artifacts/deploy
 cp -r node_modules/@aave/deploy-v3/artifacts/contracts/* temp-artifacts/deploy
+if [ -d node_modules/@aave/deploy-v3/artifacts/@aave/safety-module ]; then
+    mkdir -p temp-artifacts/deploy/@aave
+    cp -r node_modules/@aave/deploy-v3/artifacts/@aave/safety-module temp-artifacts/deploy/@aave
+fi
 
-# Export MARKET_NAME variable to use Aave market as testnet deployment setup
-export MARKET_NAME="Test"
-export ENABLE_REWARDS="false"
 echo "[BASH] Testnet environment ready"

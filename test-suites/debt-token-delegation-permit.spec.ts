@@ -132,7 +132,7 @@ makeSuite('DebtToken: Permit Delegation', (testEnv: TestEnv) => {
     ).to.be.equal('0');
   });
 
-  it('User 3 borrows stable interest dai on behalf of user 2 via permit', async () => {
+  it('User 3 delegation permit for stable debt is accepted, but stable borrowing is disabled', async () => {
     const {
       pool,
       stableDebtDai,
@@ -173,13 +173,14 @@ makeSuite('DebtToken: Permit Delegation', (testEnv: TestEnv) => {
       (await stableDebtDai.borrowAllowance(user2.address, user3.address)).toString()
     ).to.be.equal(permitAmount);
 
-    await pool
-      .connect(user3.signer)
-      .borrow(dai.address, daiMintedAmount.div(10), 1, 0, user2.address);
+    await expect(
+      pool.connect(user3.signer).borrow(dai.address, daiMintedAmount.div(10), 1, 0, user2.address)
+    ).to.be.revertedWith(ProtocolErrors.STABLE_BORROWING_NOT_ENABLED);
 
     expect(
       (await stableDebtDai.borrowAllowance(user2.address, user3.address)).toString()
-    ).to.be.equal(permitAmount.sub(daiMintedAmount.div(10)));
+    ).to.be.equal(permitAmount);
+    expect(await stableDebtDai.balanceOf(user2.address)).to.be.equal(0);
   });
 
   it('Stable debt delegation with delegator == address(0)', async () => {

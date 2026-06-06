@@ -2,7 +2,8 @@ import { evmRevert, evmSnapshot } from '@aave/deploy-v3';
 import { expect } from 'chai';
 import { BigNumber } from 'ethers';
 import { TransactionReceipt } from '@ethersproject/providers';
-import { MAX_UINT_AMOUNT, oneEther } from '../../helpers/constants';
+import { ethers } from 'hardhat';
+import { MAX_UINT_AMOUNT, oneEther, ZERO_ADDRESS } from '../../helpers/constants';
 import { convertToCurrencyDecimals } from '../../helpers/contracts-helpers';
 import { RateMode } from '../../helpers/types';
 import { makeSuite, TestEnv } from '../helpers/make-suite';
@@ -60,6 +61,19 @@ makeSuite('PriceEmitter', (testEnv: TestEnv) => {
   afterEach(async () => {
     await evmRevert(snapId);
   });
+
+  const deployEmitterHarness = async () => {
+    const addressesProvider = await (
+      await ethers.getContractFactory('MockPriceEmitterAddressesProvider')
+    ).deploy();
+    const pool = await (
+      await ethers.getContractFactory('MockPriceEmitterPool')
+    ).deploy(addressesProvider.address);
+    const oracle = await (await ethers.getContractFactory('MockPriceEmitterOracle')).deploy();
+    const harness = await (await ethers.getContractFactory('PriceEmitterHarness')).deploy();
+
+    return { addressesProvider, pool, oracle, harness };
+  };
 
   it('emits prices for supply, transfer, and withdraw', async () => {
     const {
@@ -229,5 +243,48 @@ makeSuite('PriceEmitter', (testEnv: TestEnv) => {
       borrower.address,
       oracle
     );
+  });
+
+  it('skips observations without reverting when oracle resolution fails', async () => {
+    const {
+      users: [user],
+      dai,
+    } = testEnv;
+    const { addressesProvider, pool, harness } = await deployEmitterHarness();
+
+    await pool.setRevertProvider(true);
+    let tx = await harness.emitAssetPrice(pool.address, dai.address, ACTION_SUPPLY, user.address);
+    expect(getPriceObservedEvents(harness, await tx.wait())).to.have.length(0);
+
+    await pool.setRevertProvider(false);
+    await addressesProvider.setRevertOracle(true);
+    tx = await harness.emitAssetPrice(pool.address, dai.address, ACTION_SUPPLY, user.address);
+    expect(getPriceObservedEvents(harness, await tx.wait())).to.have.length(0);
+
+    await addressesProvider.setRevertOracle(false);
+    await addressesProvider.setPriceOracle(ZERO_ADDRESS);
+    tx = await harness.emitAssetPrice(pool.address, dai.address, ACTION_SUPPLY, user.address);
+    expect(getPriceObservedEvents(harness, await tx.wait())).to.have.length(0);
+  });
+
+  it('emits a failed observation when only the resolved oracle price read fails', async () => {
+    const {
+      users: [user],
+      dai,
+    } = testEnv;
+    const { addressesProvider, pool, oracle, harness } = await deployEmitterHarness();
+
+    await addressesProvider.setPriceOracle(oracle.address);
+    await oracle.setRevertPrice(true);
+    const tx = await harness.emitAssetPrice(pool.address, dai.address, ACTION_SUPPLY, user.address);
+    const event = getPriceObservedEvents(harness, await tx.wait())[0];
+
+    expect(event?.args.asset).to.eq(dai.address);
+    expect(event?.args.price).to.eq(0);
+    expect(event?.args.baseUnit).to.eq(await oracle.BASE_CURRENCY_UNIT());
+    expect(event?.args.oracle).to.eq(oracle.address);
+    expect(event?.args.action).to.eq(ACTION_SUPPLY);
+    expect(event?.args.ok).to.be.false;
+    expect(event?.args.user).to.eq(user.address);
   });
 });

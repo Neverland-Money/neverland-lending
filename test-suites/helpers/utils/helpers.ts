@@ -11,11 +11,13 @@ import {
   getIRStrategy,
 } from '@aave/deploy-v3/dist/helpers/contract-getters';
 import { tEthereumAddress } from '../../../helpers/types';
-import { AToken, AaveProtocolDataProvider, Pool } from '../../../types';
 import { ReserveData, UserReserveData } from './interfaces';
 
+const IERC20_DETAILED_ARTIFACT =
+  'contracts/dependencies/openzeppelin/contracts/IERC20Detailed.sol:IERC20Detailed';
+
 export const getReserveData = async (
-  helper: AaveProtocolDataProvider,
+  helper: any,
   reserve: tEthereumAddress
 ): Promise<ReserveData> => {
   const [reserveData, tokenAddresses, irStrategyAddress, reserveConfiguration, token] =
@@ -24,7 +26,7 @@ export const getReserveData = async (
       helper.getReserveTokensAddresses(reserve),
       helper.getInterestRateStrategyAddress(reserve),
       helper.getReserveConfigurationData(reserve),
-      getContract('IERC20Detailed', reserve),
+      getContract(IERC20_DETAILED_ARTIFACT, reserve),
     ]);
 
   const stableDebtToken = await getStableDebtToken(tokenAddresses.stableDebtTokenAddress);
@@ -43,7 +45,7 @@ export const getReserveData = async (
 
   const accruedToTreasuryScaled = reserveData.accruedToTreasuryScaled;
   const unbacked = reserveData.unbacked;
-  const aToken = (await getAToken(tokenAddresses.aTokenAddress)) as AToken;
+  const aToken = await getAToken(tokenAddresses.aTokenAddress);
 
   // Need the reserve factor
   const reserveFactor = reserveConfiguration.reserveFactor;
@@ -93,8 +95,8 @@ export const getReserveData = async (
 };
 
 export const getUserData = async (
-  pool: Pool,
-  helper: AaveProtocolDataProvider,
+  pool: any,
+  helper: any,
   reserve: string,
   user: tEthereumAddress,
   sender?: tEthereumAddress
@@ -122,11 +124,7 @@ export const getUserData = async (
   };
 };
 
-const getATokenUserData = async (
-  reserve: string,
-  user: string,
-  helpersContract: AaveProtocolDataProvider
-) => {
+const getATokenUserData = async (reserve: string, user: string, helpersContract: any) => {
   const aTokenAddress: string = (await helpersContract.getReserveTokensAddresses(reserve))
     .aTokenAddress;
 

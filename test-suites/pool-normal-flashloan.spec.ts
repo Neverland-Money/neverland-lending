@@ -2,7 +2,6 @@ import { expect } from 'chai';
 import { BigNumber, ethers } from 'ethers';
 import { MAX_UINT_AMOUNT } from '../helpers/constants';
 import { convertToCurrencyDecimals } from '../helpers/contracts-helpers';
-import { MockFlashLoanReceiver } from '../types/MockFlashLoanReceiver';
 import { ProtocolErrors } from '../helpers/types';
 import {
   getMockFlashLoanReceiver,
@@ -13,13 +12,18 @@ import { TestEnv, makeSuite } from './helpers/make-suite';
 import './helpers/utils/wadraymath';
 
 makeSuite('Pool: FlashLoan for gas comparison', (testEnv: TestEnv) => {
-  let _mockFlashLoanReceiver = {} as MockFlashLoanReceiver;
+  let _mockFlashLoanReceiver: any;
 
   const { ERC20_TRANSFER_AMOUNT_EXCEEDS_BALANCE, INVALID_FLASHLOAN_EXECUTOR_RETURN } =
     ProtocolErrors;
 
   const TOTAL_PREMIUM = 9;
   const PREMIUM_TO_PROTOCOL = 3000;
+  const PERCENTAGE_FACTOR = BigNumber.from(10000);
+  const percentMulCeil = (value: BigNumber, percentage: number) => {
+    const product = value.mul(percentage);
+    return product.div(PERCENTAGE_FACTOR).add(product.mod(PERCENTAGE_FACTOR).isZero() ? 0 : 1);
+  };
 
   before(async () => {
     _mockFlashLoanReceiver = await getMockFlashLoanReceiver();
@@ -60,8 +64,8 @@ makeSuite('Pool: FlashLoan for gas comparison', (testEnv: TestEnv) => {
     const { pool, helpersContract, weth, aWETH, dai, aDai } = testEnv;
 
     const wethFlashBorrowedAmount = ethers.utils.parseEther('0.8');
-    const wethTotalFees = wethFlashBorrowedAmount.mul(TOTAL_PREMIUM).div(10000);
-    const wethFeesToProtocol = wethTotalFees.mul(PREMIUM_TO_PROTOCOL).div(10000);
+    const wethTotalFees = percentMulCeil(wethFlashBorrowedAmount, TOTAL_PREMIUM);
+    const wethFeesToProtocol = wethTotalFees.percentMul(PREMIUM_TO_PROTOCOL);
     const wethFeesToLp = wethTotalFees.sub(wethFeesToProtocol);
 
     const wethLiquidityIndexAdded = wethFeesToLp
@@ -102,7 +106,7 @@ makeSuite('Pool: FlashLoan for gas comparison', (testEnv: TestEnv) => {
     expect(wethCurrentLiquidityIndex).to.be.equal(
       wethLiquidityIndexBefore.add(wethLiquidityIndexAdded)
     );
-    expect(wethReservesAfter).to.be.equal(wethReservesBefore.add(wethFeesToProtocol));
+    expect(wethReservesAfter).to.be.closeTo(wethReservesBefore.add(wethFeesToProtocol), 1);
   });
 
   it('Takes an ETH flashloan with mode = 0 as big as the available liquidity', async () => {
@@ -114,8 +118,8 @@ makeSuite('Pool: FlashLoan for gas comparison', (testEnv: TestEnv) => {
 
     const flashBorrowedAmount = totalLiquidityBefore;
 
-    const totalFees = flashBorrowedAmount.mul(TOTAL_PREMIUM).div(10000);
-    const feesToProtocol = totalFees.mul(PREMIUM_TO_PROTOCOL).div(10000);
+    const totalFees = percentMulCeil(flashBorrowedAmount, TOTAL_PREMIUM);
+    const feesToProtocol = totalFees.percentMul(PREMIUM_TO_PROTOCOL);
     const feesToLp = totalFees.sub(feesToProtocol);
     const liquidityIndexBefore = reserveData.liquidityIndex;
     const liquidityIndexAdded = feesToLp
@@ -248,8 +252,8 @@ makeSuite('Pool: FlashLoan for gas comparison', (testEnv: TestEnv) => {
     await _mockFlashLoanReceiver.setFailExecutionTransfer(false);
 
     const flashBorrowedAmount = await convertToCurrencyDecimals(usdc.address, '500');
-    const totalFees = flashBorrowedAmount.mul(TOTAL_PREMIUM).div(10000);
-    const feesToProtocol = totalFees.mul(PREMIUM_TO_PROTOCOL).div(10000);
+    const totalFees = percentMulCeil(flashBorrowedAmount, TOTAL_PREMIUM);
+    const feesToProtocol = totalFees.percentMul(PREMIUM_TO_PROTOCOL);
     const feesToLp = totalFees.sub(feesToProtocol);
     const liquidityIndexAdded = feesToLp
       .mul(ethers.BigNumber.from(10).pow(27))
@@ -287,7 +291,7 @@ makeSuite('Pool: FlashLoan for gas comparison', (testEnv: TestEnv) => {
     expect(totalLiquidityBefore.add(totalFees)).to.be.closeTo(totalLiquidityAfter, 2);
     expect(currentLiquidityRate).to.be.equal(0);
     expect(currentLiquidityIndex).to.be.equal(liquidityIndexBefore.add(liquidityIndexAdded));
-    expect(reservesAfter).to.be.equal(reservesBefore.add(feesToProtocol));
+    expect(reservesAfter).to.be.closeTo(reservesBefore.add(feesToProtocol), 1);
   });
 
   it('Takes out a 500 USDC flashloan with mode = 0, does not return the funds (revert expected)', async () => {

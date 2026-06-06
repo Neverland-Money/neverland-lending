@@ -1,19 +1,8 @@
-import { MockATokenRepayment__factory } from './../../../types/factories/mocks/tokens/MockATokenRepayment__factory';
 import { ethers } from 'hardhat';
 import { utils } from 'ethers';
 import { BigNumber } from '@ethersproject/bignumber';
 import { TransactionReceipt } from '@ethersproject/providers';
-import {
-  AToken,
-  AToken__factory,
-  IERC20__factory,
-  Pool,
-  StableDebtToken,
-  StableDebtToken__factory,
-  VariableDebtToken,
-  VariableDebtToken__factory,
-} from '../../../types';
-import { ZERO_ADDRESS } from '../../../helpers/constants';
+import { RAY, ZERO_ADDRESS } from '../../../helpers/constants';
 import { SignerWithAddress } from '../make-suite';
 import { calcExpectedStableDebtTokenBalance } from './calculations';
 import { getTxCostAndTimestamp } from '../actions';
@@ -77,16 +66,52 @@ const STABLE_DEBT_TOKEN_EVENTS = [
   },
 ];
 
-const getBalanceIncrease = (
+const ray = BigNumber.from(RAY);
+
+const rayMulFloor = (a: BigNumber, b: BigNumber) => a.mul(b).div(ray);
+
+const rayMulCeil = (a: BigNumber, b: BigNumber) => {
+  if (a.isZero() || b.isZero()) return BigNumber.from(0);
+  return a.mul(b).add(ray.sub(1)).div(ray);
+};
+
+const rayDivFloor = (a: BigNumber, b: BigNumber) => a.mul(ray).div(b);
+
+const rayDivCeil = (a: BigNumber, b: BigNumber) => {
+  if (a.isZero()) return BigNumber.from(0);
+  return a.mul(ray).add(b.sub(1)).div(b);
+};
+
+const getATokenBalance = (scaledBalance: BigNumber, index: BigNumber) => {
+  return rayMulFloor(scaledBalance, index);
+};
+
+const getVTokenBalance = (scaledBalance: BigNumber, index: BigNumber) => {
+  return rayMulCeil(scaledBalance, index);
+};
+
+const getATokenBalanceIncrease = (
   scaledBalance: BigNumber,
   indexBeforeAction: BigNumber,
   indexAfterAction: BigNumber
 ) => {
-  return scaledBalance.rayMul(indexAfterAction).sub(scaledBalance.rayMul(indexBeforeAction));
+  return getATokenBalance(scaledBalance, indexAfterAction).sub(
+    getATokenBalance(scaledBalance, indexBeforeAction)
+  );
+};
+
+const getVTokenBalanceIncrease = (
+  scaledBalance: BigNumber,
+  indexBeforeAction: BigNumber,
+  indexAfterAction: BigNumber
+) => {
+  return getVTokenBalance(scaledBalance, indexAfterAction).sub(
+    getVTokenBalance(scaledBalance, indexBeforeAction)
+  );
 };
 
 export const supply = async (
-  pool: Pool,
+  pool: any,
   user: SignerWithAddress,
   underlying: string,
   amountToConvert: string,
@@ -95,30 +120,29 @@ export const supply = async (
 ) => {
   const amount = await convertToCurrencyDecimals(underlying, amountToConvert);
   const { aTokenAddress } = await pool.getReserveData(underlying);
-  const underlyingToken = IERC20__factory.connect(underlying, user.signer);
-  const aToken = AToken__factory.connect(aTokenAddress, user.signer);
+  const underlyingToken = await ethers.getContractAt('IERC20', underlying, user.signer);
+  const aToken = await ethers.getContractAt('AToken', aTokenAddress, user.signer);
 
   const previousIndex = await aToken.getPreviousIndex(onBehalfOf);
+  const scaledBalanceBefore = await aToken.scaledBalanceOf(onBehalfOf);
 
   const tx = await pool.connect(user.signer).supply(underlying, amount, onBehalfOf, '0');
   const rcpt = await tx.wait();
 
   const indexAfter = await pool.getReserveNormalizedIncome(underlying);
-  const addedScaledBalance = amount.rayDiv(indexAfter);
-  const scaledBalance = (await aToken.scaledBalanceOf(onBehalfOf)).sub(addedScaledBalance);
-  const balanceIncrease = getBalanceIncrease(scaledBalance, previousIndex, indexAfter);
+  const amountScaled = rayDivFloor(amount, indexAfter);
+  const balanceIncrease = getATokenBalanceIncrease(scaledBalanceBefore, previousIndex, indexAfter);
+  const amountToMint = getATokenBalance(scaledBalanceBefore.add(amountScaled), indexAfter).sub(
+    getATokenBalance(scaledBalanceBefore, previousIndex)
+  );
 
   if (debug) printATokenEvents(aToken, rcpt);
   matchEvent(rcpt, 'Transfer', underlyingToken, underlying, [user.address, aToken.address, amount]);
-  matchEvent(rcpt, 'Transfer', aToken, aToken.address, [
-    ZERO_ADDRESS,
-    onBehalfOf,
-    amount.add(balanceIncrease),
-  ]);
+  matchEvent(rcpt, 'Transfer', aToken, aToken.address, [ZERO_ADDRESS, onBehalfOf, amountToMint]);
   matchEvent(rcpt, 'Mint', aToken, aToken.address, [
     user.address,
     onBehalfOf,
-    amount.add(balanceIncrease),
+    amountToMint,
     balanceIncrease,
     indexAfter,
   ]);
@@ -126,7 +150,7 @@ export const supply = async (
 };
 
 export const withdraw = async (
-  pool: Pool,
+  pool: any,
   user: SignerWithAddress,
   underlying: string,
   amountToConvert: string,
@@ -135,45 +159,49 @@ export const withdraw = async (
 ) => {
   const amount = await convertToCurrencyDecimals(underlying, amountToConvert);
   const { aTokenAddress } = await pool.getReserveData(underlying);
-  const underlyingToken = IERC20__factory.connect(underlying, user.signer);
-  const aToken = AToken__factory.connect(aTokenAddress, user.signer);
+  const underlyingToken = await ethers.getContractAt('IERC20', underlying, user.signer);
+  const aToken = await ethers.getContractAt('AToken', aTokenAddress, user.signer);
 
   const previousIndex = await aToken.getPreviousIndex(user.address);
+  const scaledBalanceBefore = await aToken.scaledBalanceOf(user.address);
 
   const tx = await pool.connect(user.signer).withdraw(underlying, amount, to);
   const rcpt = await tx.wait();
 
   const indexAfter = await pool.getReserveNormalizedIncome(underlying);
-  const addedScaledBalance = amount.rayDiv(indexAfter);
-  const scaledBalance = (await aToken.scaledBalanceOf(user.address)).add(addedScaledBalance);
-  const balanceIncrease = getBalanceIncrease(scaledBalance, previousIndex, indexAfter);
+  const scaledBalanceAfter = await aToken.scaledBalanceOf(user.address);
+  const previousBalance = getATokenBalance(scaledBalanceBefore, previousIndex);
+  const nextBalance = getATokenBalance(scaledBalanceAfter, indexAfter);
+  const balanceIncrease = getATokenBalance(scaledBalanceBefore, indexAfter).sub(previousBalance);
 
   if (debug) printATokenEvents(aToken, rcpt);
   matchEvent(rcpt, 'Transfer', underlyingToken, underlying, [aToken.address, to, amount]);
 
-  if (balanceIncrease.gt(amount)) {
+  if (nextBalance.gt(previousBalance)) {
+    const amountToMint = nextBalance.sub(previousBalance);
     matchEvent(rcpt, 'Transfer', aToken, aToken.address, [
       ZERO_ADDRESS,
       user.address,
-      balanceIncrease.sub(amount),
+      amountToMint,
     ]);
     matchEvent(rcpt, 'Mint', aToken, aToken.address, [
       user.address,
       user.address,
-      balanceIncrease.sub(amount),
+      amountToMint,
       balanceIncrease,
       indexAfter,
     ]);
   } else {
+    const amountToBurn = previousBalance.sub(nextBalance);
     matchEvent(rcpt, 'Transfer', aToken, aToken.address, [
       user.address,
       ZERO_ADDRESS,
-      amount.sub(balanceIncrease),
+      amountToBurn,
     ]);
     matchEvent(rcpt, 'Burn', aToken, aToken.address, [
       user.address,
       to,
-      amount.sub(balanceIncrease),
+      amountToBurn,
       balanceIncrease,
       indexAfter,
     ]);
@@ -183,7 +211,7 @@ export const withdraw = async (
 };
 
 export const transfer = async (
-  pool: Pool,
+  pool: any,
   user: SignerWithAddress,
   underlying: string,
   amountToConvert: string,
@@ -192,23 +220,27 @@ export const transfer = async (
 ) => {
   const amount = await convertToCurrencyDecimals(underlying, amountToConvert);
   const { aTokenAddress } = await pool.getReserveData(underlying);
-  const aToken = AToken__factory.connect(aTokenAddress, user.signer);
+  const aToken = await ethers.getContractAt('AToken', aTokenAddress, user.signer);
 
   const fromPreviousIndex = await aToken.getPreviousIndex(user.address);
   const toPreviousIndex = await aToken.getPreviousIndex(to);
+  const fromScaledBalance = await aToken.scaledBalanceOf(user.address);
+  const toScaledBalance = await aToken.scaledBalanceOf(to);
 
   const tx = await aToken.connect(user.signer).transfer(to, amount);
   const rcpt = await tx.wait();
 
   const indexAfter = await pool.getReserveNormalizedIncome(underlying);
-  const addedScaledBalance = amount.rayDiv(indexAfter);
-
-  // The amount of scaled balance transferred is 0 if self-transfer
-  const deltaScaledBalance = user.address == to ? BigNumber.from(0) : addedScaledBalance;
-  const fromScaledBalance = (await aToken.scaledBalanceOf(user.address)).add(deltaScaledBalance);
-  const toScaledBalance = (await aToken.scaledBalanceOf(to)).sub(deltaScaledBalance);
-  const fromBalanceIncrease = getBalanceIncrease(fromScaledBalance, fromPreviousIndex, indexAfter);
-  const toBalanceIncrease = getBalanceIncrease(toScaledBalance, toPreviousIndex, indexAfter);
+  const scaledAmount = rayDivCeil(amount, indexAfter);
+  const fromBalanceIncrease = getATokenBalanceIncrease(
+    fromScaledBalance,
+    fromPreviousIndex,
+    indexAfter
+  );
+  const toBalanceIncrease =
+    user.address == to
+      ? BigNumber.from(0)
+      : getATokenBalanceIncrease(toScaledBalance, toPreviousIndex, indexAfter);
 
   if (debug) printATokenEvents(aToken, rcpt);
 
@@ -216,7 +248,7 @@ export const transfer = async (
   matchEvent(rcpt, 'BalanceTransfer', aToken, aToken.address, [
     user.address,
     to,
-    addedScaledBalance,
+    scaledAmount,
     indexAfter,
   ]);
   if (fromBalanceIncrease.gt(0)) {
@@ -248,7 +280,7 @@ export const transfer = async (
 };
 
 export const transferFrom = async (
-  pool: Pool,
+  pool: any,
   user: SignerWithAddress,
   origin: string,
   underlying: string,
@@ -258,23 +290,27 @@ export const transferFrom = async (
 ) => {
   const amount = await convertToCurrencyDecimals(underlying, amountToConvert);
   const { aTokenAddress } = await pool.getReserveData(underlying);
-  const aToken = AToken__factory.connect(aTokenAddress, user.signer);
+  const aToken = await ethers.getContractAt('AToken', aTokenAddress, user.signer);
 
   const fromPreviousIndex = await aToken.getPreviousIndex(origin);
   const toPreviousIndex = await aToken.getPreviousIndex(to);
+  const fromScaledBalance = await aToken.scaledBalanceOf(origin);
+  const toScaledBalance = await aToken.scaledBalanceOf(to);
 
   const tx = await aToken.connect(user.signer).transferFrom(origin, to, amount);
   const rcpt = await tx.wait();
 
   const indexAfter = await pool.getReserveNormalizedIncome(underlying);
-  const addedScaledBalance = amount.rayDiv(indexAfter);
-
-  // The amount of scaled balance transferred is 0 if self-transfer
-  const deltaScaledBalance = origin == to ? BigNumber.from(0) : addedScaledBalance;
-  const fromScaledBalance = (await aToken.scaledBalanceOf(origin)).add(deltaScaledBalance);
-  const toScaledBalance = (await aToken.scaledBalanceOf(to)).sub(deltaScaledBalance);
-  const fromBalanceIncrease = getBalanceIncrease(fromScaledBalance, fromPreviousIndex, indexAfter);
-  const toBalanceIncrease = getBalanceIncrease(toScaledBalance, toPreviousIndex, indexAfter);
+  const scaledAmount = rayDivCeil(amount, indexAfter);
+  const fromBalanceIncrease = getATokenBalanceIncrease(
+    fromScaledBalance,
+    fromPreviousIndex,
+    indexAfter
+  );
+  const toBalanceIncrease =
+    origin == to
+      ? BigNumber.from(0)
+      : getATokenBalanceIncrease(toScaledBalance, toPreviousIndex, indexAfter);
 
   if (debug) printATokenEvents(aToken, rcpt);
 
@@ -282,7 +318,7 @@ export const transferFrom = async (
   matchEvent(rcpt, 'BalanceTransfer', aToken, aToken.address, [
     origin,
     to,
-    addedScaledBalance,
+    scaledAmount,
     indexAfter,
   ]);
   if (fromBalanceIncrease.gt(0)) {
@@ -314,7 +350,7 @@ export const transferFrom = async (
 };
 
 export const variableBorrow = async (
-  pool: Pool,
+  pool: any,
   user: SignerWithAddress,
   underlying: string,
   amountToConvert: string,
@@ -323,14 +359,16 @@ export const variableBorrow = async (
 ) => {
   const amount = await convertToCurrencyDecimals(underlying, amountToConvert);
   const { aTokenAddress, variableDebtTokenAddress } = await pool.getReserveData(underlying);
-  const underlyingToken = IERC20__factory.connect(underlying, user.signer);
-  const aToken = AToken__factory.connect(aTokenAddress, user.signer);
-  const variableDebtToken = VariableDebtToken__factory.connect(
+  const underlyingToken = await ethers.getContractAt('IERC20', underlying, user.signer);
+  const aToken = await ethers.getContractAt('AToken', aTokenAddress, user.signer);
+  const variableDebtToken = await ethers.getContractAt(
+    'VariableDebtToken',
     variableDebtTokenAddress,
     user.signer
   );
 
   let previousIndex = await variableDebtToken.getPreviousIndex(onBehalfOf);
+  const scaledBalanceBefore = await variableDebtToken.scaledBalanceOf(onBehalfOf);
 
   const tx = await pool
     .connect(user.signer)
@@ -338,11 +376,11 @@ export const variableBorrow = async (
   const rcpt = await tx.wait();
 
   const indexAfter = await pool.getReserveNormalizedVariableDebt(underlying);
-  const addedScaledBalance = amount.rayDiv(indexAfter);
-  const scaledBalance = (await variableDebtToken.scaledBalanceOf(onBehalfOf)).sub(
-    addedScaledBalance
+  const amountScaled = rayDivCeil(amount, indexAfter);
+  const balanceIncrease = getVTokenBalanceIncrease(scaledBalanceBefore, previousIndex, indexAfter);
+  const amountToMint = getVTokenBalance(scaledBalanceBefore.add(amountScaled), indexAfter).sub(
+    getVTokenBalance(scaledBalanceBefore, previousIndex)
   );
-  const balanceIncrease = getBalanceIncrease(scaledBalance, previousIndex, indexAfter);
 
   if (debug) printVariableDebtTokenEvents(variableDebtToken, rcpt);
 
@@ -350,12 +388,12 @@ export const variableBorrow = async (
   matchEvent(rcpt, 'Transfer', variableDebtToken, variableDebtToken.address, [
     ZERO_ADDRESS,
     onBehalfOf,
-    amount.add(balanceIncrease),
+    amountToMint,
   ]);
   matchEvent(rcpt, 'Mint', variableDebtToken, variableDebtToken.address, [
     user.address,
     onBehalfOf,
-    amount.add(balanceIncrease),
+    amountToMint,
     balanceIncrease,
     indexAfter,
   ]);
@@ -363,7 +401,7 @@ export const variableBorrow = async (
 };
 
 export const repayVariableBorrow = async (
-  pool: Pool,
+  pool: any,
   user: SignerWithAddress,
   underlying: string,
   amountToConvert: string,
@@ -372,14 +410,16 @@ export const repayVariableBorrow = async (
 ) => {
   const amount = await convertToCurrencyDecimals(underlying, amountToConvert);
   const { aTokenAddress, variableDebtTokenAddress } = await pool.getReserveData(underlying);
-  const underlyingToken = IERC20__factory.connect(underlying, user.signer);
-  const aToken = AToken__factory.connect(aTokenAddress, user.signer);
-  const variableDebtToken = VariableDebtToken__factory.connect(
+  const underlyingToken = await ethers.getContractAt('IERC20', underlying, user.signer);
+  const aToken = await ethers.getContractAt('AToken', aTokenAddress, user.signer);
+  const variableDebtToken = await ethers.getContractAt(
+    'VariableDebtToken',
     variableDebtTokenAddress,
     user.signer
   );
 
   const previousIndex = await variableDebtToken.getPreviousIndex(onBehalfOf);
+  const scaledBalanceBefore = await variableDebtToken.scaledBalanceOf(onBehalfOf);
 
   const tx = await pool
     .connect(user.signer)
@@ -388,42 +428,46 @@ export const repayVariableBorrow = async (
 
   // check handleRepayment function is correctly called
   await expect(tx)
-    .to.emit(MockATokenRepayment__factory.connect(aTokenAddress, user.signer), 'MockRepayment')
+    .to.emit(
+      await ethers.getContractAt('MockATokenRepayment', aTokenAddress, user.signer),
+      'MockRepayment'
+    )
     .withArgs(user.address, onBehalfOf, amount);
 
   const indexAfter = await pool.getReserveNormalizedVariableDebt(underlying);
-  const addedScaledBalance = amount.rayDiv(indexAfter);
-  const scaledBalance = (await variableDebtToken.scaledBalanceOf(onBehalfOf)).add(
-    addedScaledBalance
-  );
-  const balanceIncrease = getBalanceIncrease(scaledBalance, previousIndex, indexAfter);
+  const scaledBalanceAfter = await variableDebtToken.scaledBalanceOf(onBehalfOf);
+  const previousBalance = getVTokenBalance(scaledBalanceBefore, previousIndex);
+  const nextBalance = getVTokenBalance(scaledBalanceAfter, indexAfter);
+  const balanceIncrease = getVTokenBalance(scaledBalanceBefore, indexAfter).sub(previousBalance);
 
   if (debug) printVariableDebtTokenEvents(variableDebtToken, rcpt);
 
   matchEvent(rcpt, 'Transfer', underlyingToken, underlying, [user.address, aToken.address, amount]);
-  if (balanceIncrease.gt(amount)) {
+  if (nextBalance.gt(previousBalance)) {
+    const amountToMint = nextBalance.sub(previousBalance);
     matchEvent(rcpt, 'Transfer', variableDebtToken, variableDebtToken.address, [
       ZERO_ADDRESS,
       onBehalfOf,
-      balanceIncrease.sub(amount),
+      amountToMint,
     ]);
     matchEvent(rcpt, 'Mint', variableDebtToken, variableDebtToken.address, [
       onBehalfOf,
       onBehalfOf,
-      balanceIncrease.sub(amount),
+      amountToMint,
       balanceIncrease,
       indexAfter,
     ]);
   } else {
+    const amountToBurn = previousBalance.sub(nextBalance);
     matchEvent(rcpt, 'Transfer', variableDebtToken, variableDebtToken.address, [
       onBehalfOf,
       ZERO_ADDRESS,
-      amount.sub(balanceIncrease),
+      amountToBurn,
     ]);
     matchEvent(rcpt, 'Burn', variableDebtToken, variableDebtToken.address, [
       onBehalfOf,
       ZERO_ADDRESS,
-      amount.sub(balanceIncrease),
+      amountToBurn,
       balanceIncrease,
       indexAfter,
     ]);
@@ -433,7 +477,7 @@ export const repayVariableBorrow = async (
 };
 
 export const stableBorrow = async (
-  pool: Pool,
+  pool: any,
   user: SignerWithAddress,
   underlying: string,
   amountToConvert: string,
@@ -442,9 +486,13 @@ export const stableBorrow = async (
 ) => {
   const amount = await convertToCurrencyDecimals(underlying, amountToConvert);
   const { aTokenAddress, stableDebtTokenAddress } = await pool.getReserveData(underlying);
-  const underlyingToken = IERC20__factory.connect(underlying, user.signer);
-  const aToken = AToken__factory.connect(aTokenAddress, user.signer);
-  const stableDebtToken = StableDebtToken__factory.connect(stableDebtTokenAddress, user.signer);
+  const underlyingToken = await ethers.getContractAt('IERC20', underlying, user.signer);
+  const aToken = await ethers.getContractAt('AToken', aTokenAddress, user.signer);
+  const stableDebtToken = await ethers.getContractAt(
+    'StableDebtToken',
+    stableDebtTokenAddress,
+    user.signer
+  );
 
   const previousIndex = await stableDebtToken.getUserStableRate(onBehalfOf);
   const principalBalance = await stableDebtToken.principalBalanceOf(onBehalfOf);
@@ -490,7 +538,7 @@ export const stableBorrow = async (
 };
 
 export const repayStableBorrow = async (
-  pool: Pool,
+  pool: any,
   user: SignerWithAddress,
   underlying: string,
   amountToConvert: string,
@@ -499,9 +547,13 @@ export const repayStableBorrow = async (
 ) => {
   const amount = await convertToCurrencyDecimals(underlying, amountToConvert);
   const { aTokenAddress, stableDebtTokenAddress } = await pool.getReserveData(underlying);
-  const underlyingToken = IERC20__factory.connect(underlying, user.signer);
-  const aToken = AToken__factory.connect(aTokenAddress, user.signer);
-  const stableDebtToken = StableDebtToken__factory.connect(stableDebtTokenAddress, user.signer);
+  const underlyingToken = await ethers.getContractAt('IERC20', underlying, user.signer);
+  const aToken = await ethers.getContractAt('AToken', aTokenAddress, user.signer);
+  const stableDebtToken = await ethers.getContractAt(
+    'StableDebtToken',
+    stableDebtTokenAddress,
+    user.signer
+  );
 
   const principalBalance = await stableDebtToken.principalBalanceOf(onBehalfOf);
   const previousIndex = await stableDebtToken.getUserStableRate(onBehalfOf);
@@ -562,7 +614,7 @@ export const repayStableBorrow = async (
   return rcpt;
 };
 
-export const printATokenEvents = (aToken: AToken, receipt: TransactionReceipt) => {
+export const printATokenEvents = (aToken: any, receipt: TransactionReceipt) => {
   for (const eventSig of ATOKEN_EVENTS) {
     const eventName = eventSig.sig.split('(')[0];
     const encodedSig = ethers.utils.keccak256(ethers.utils.toUtf8Bytes(eventSig.sig));
@@ -586,7 +638,7 @@ export const printATokenEvents = (aToken: AToken, receipt: TransactionReceipt) =
   }
 };
 
-export const getATokenEvent = (aToken: AToken, receipt: TransactionReceipt, eventName: string) => {
+export const getATokenEvent = (aToken: any, receipt: TransactionReceipt, eventName: string) => {
   const eventSig = ATOKEN_EVENTS.find((item) => item.sig.split('(')[0] === eventName);
   const results: utils.Result = [];
   if (eventSig) {
@@ -602,7 +654,7 @@ export const getATokenEvent = (aToken: AToken, receipt: TransactionReceipt, even
 };
 
 export const printVariableDebtTokenEvents = (
-  variableDebtToken: VariableDebtToken,
+  variableDebtToken: any,
   receipt: TransactionReceipt
 ) => {
   for (const eventSig of VARIABLE_DEBT_TOKEN_EVENTS) {
@@ -633,7 +685,7 @@ export const printVariableDebtTokenEvents = (
 };
 
 export const getVariableDebtTokenEvent = (
-  variableDebtToken: VariableDebtToken,
+  variableDebtToken: any,
   receipt: TransactionReceipt,
   eventName: string
 ) => {
@@ -653,10 +705,7 @@ export const getVariableDebtTokenEvent = (
   return results;
 };
 
-export const printStableDebtTokenEvents = (
-  stableDebtToken: StableDebtToken,
-  receipt: TransactionReceipt
-) => {
+export const printStableDebtTokenEvents = (stableDebtToken: any, receipt: TransactionReceipt) => {
   for (const eventSig of STABLE_DEBT_TOKEN_EVENTS) {
     const eventName = eventSig.sig.split('(')[0];
     const encodedSig = ethers.utils.keccak256(ethers.utils.toUtf8Bytes(eventSig.sig));
@@ -685,7 +734,7 @@ export const printStableDebtTokenEvents = (
 };
 
 export const getStableDebtTokenEvent = (
-  stableDebtToken: StableDebtToken,
+  stableDebtToken: any,
   receipt: TransactionReceipt,
   eventName: string
 ) => {

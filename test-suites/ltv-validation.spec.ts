@@ -68,7 +68,9 @@ makeSuite('LTV validation', (testEnv: TestEnv) => {
     const borrowedAmount = await convertToCurrencyDecimals(weth.address, '0.000414');
 
     expect(
-      await pool.connect(user1.signer).borrow(weth.address, borrowedAmount, 1, 0, user1.address)
+      await pool
+        .connect(user1.signer)
+        .borrow(weth.address, borrowedAmount, RateMode.Variable, 0, user1.address)
     );
   });
 

@@ -12,7 +12,6 @@ import {FlashLoanLogic} from '../libraries/logic/FlashLoanLogic.sol';
 import {BorrowLogic} from '../libraries/logic/BorrowLogic.sol';
 import {LiquidationLogic} from '../libraries/logic/LiquidationLogic.sol';
 import {DataTypes} from '../libraries/types/DataTypes.sol';
-import {BridgeLogic} from '../libraries/logic/BridgeLogic.sol';
 import {IERC20WithPermit} from '../../interfaces/IERC20WithPermit.sol';
 import {IPoolAddressesProvider} from '../../interfaces/IPoolAddressesProvider.sol';
 import {IPool} from '../../interfaces/IPool.sol';
@@ -28,10 +27,11 @@ import {PoolStorage} from './PoolStorage.sol';
  *   # Withdraw
  *   # Borrow
  *   # Repay
- *   # Swap their loans between variable and stable rate
- *   # Enable/disable their supplied assets as collateral rebalance stable rate borrow positions
+ *   # Enable/disable their supplied assets as collateral
  *   # Liquidate positions
  *   # Execute Flash Loans
+ * @dev Stable-rate borrow, repay, swap, and rebalance entrypoints are retained
+ *      for ABI compatibility but intentionally revert in this release.
  * @dev To be covered by a proxy contract, owned by the PoolAddressesProvider of the specific market
  * @dev All admin functions are callable by the PoolConfigurator contract defined also in the
  *   PoolAddressesProvider
@@ -39,7 +39,7 @@ import {PoolStorage} from './PoolStorage.sol';
 contract Pool is VersionedInitializable, PoolStorage, IPool {
   using ReserveLogic for DataTypes.ReserveData;
 
-  uint256 public constant POOL_REVISION = 0x1;
+  uint256 public constant POOL_REVISION = 0x2;
   IPoolAddressesProvider public immutable ADDRESSES_PROVIDER;
 
   /**
@@ -58,14 +58,6 @@ contract Pool is VersionedInitializable, PoolStorage, IPool {
     _;
   }
 
-  /**
-   * @dev Only bridge can call functions marked by this modifier.
-   */
-  modifier onlyBridge() {
-    _onlyBridge();
-    _;
-  }
-
   function _onlyPoolConfigurator() internal view virtual {
     require(
       ADDRESSES_PROVIDER.getPoolConfigurator() == msg.sender,
@@ -77,13 +69,6 @@ contract Pool is VersionedInitializable, PoolStorage, IPool {
     require(
       IACLManager(ADDRESSES_PROVIDER.getACLManager()).isPoolAdmin(msg.sender),
       Errors.CALLER_NOT_POOL_ADMIN
-    );
-  }
-
-  function _onlyBridge() internal view virtual {
-    require(
-      IACLManager(ADDRESSES_PROVIDER.getACLManager()).isBridge(msg.sender),
-      Errors.CALLER_NOT_BRIDGE
     );
   }
 
@@ -112,31 +97,13 @@ contract Pool is VersionedInitializable, PoolStorage, IPool {
   }
 
   /// @inheritdoc IPool
-  function mintUnbacked(
-    address asset,
-    uint256 amount,
-    address onBehalfOf,
-    uint16 referralCode
-  ) external virtual override onlyBridge {
-    BridgeLogic.executeMintUnbacked(
-      _reserves,
-      _reservesList,
-      _usersConfig[onBehalfOf],
-      asset,
-      amount,
-      onBehalfOf,
-      referralCode
-    );
+  function mintUnbacked(address, uint256, address, uint16) external virtual override {
+    revert('Neverland: portal/bridge disabled');
   }
 
   /// @inheritdoc IPool
-  function backUnbacked(
-    address asset,
-    uint256 amount,
-    uint256 fee
-  ) external virtual override onlyBridge returns (uint256) {
-    return
-      BridgeLogic.executeBackUnbacked(_reserves[asset], asset, amount, fee, _bridgeProtocolFee);
+  function backUnbacked(address, uint256, uint256) external virtual override returns (uint256) {
+    revert('Neverland: portal/bridge disabled');
   }
 
   /// @inheritdoc IPool
@@ -621,7 +588,8 @@ contract Pool is VersionedInitializable, PoolStorage, IPool {
 
   /// @inheritdoc IPool
   function dropReserve(address asset) external virtual override onlyPoolConfigurator {
-    PoolLogic.executeDropReserve(_reserves, _reservesList, asset);
+    asset;
+    revert(Errors.OPERATION_NOT_SUPPORTED);
   }
 
   /// @inheritdoc IPool

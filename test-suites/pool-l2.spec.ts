@@ -30,7 +30,7 @@ import { getTestWallets } from './helpers/utils/wallets';
 import { MAX_UINT_AMOUNT } from '../helpers/constants';
 import { parseUnits } from 'ethers/lib/utils';
 import { getReserveData, getUserData } from './helpers/utils/helpers';
-import { calcExpectedStableDebtTokenBalance } from './helpers/utils/calculations';
+import { calcExpectedVariableDebtTokenBalance } from './helpers/utils/calculations';
 
 declare var hre: HardhatRuntimeEnvironment;
 
@@ -47,6 +47,7 @@ makeSuite('Pool: L2 functions', (testEnv: TestEnv) => {
     DEBT_CEILING_NOT_ZERO,
     ASSET_NOT_LISTED,
     ZERO_ADDRESS_NOT_VALID,
+    STABLE_BORROWING_NOT_ENABLED,
   } = ProtocolErrors;
 
   let l2Pool: MockL2Pool;
@@ -267,7 +268,7 @@ makeSuite('Pool: L2 functions', (testEnv: TestEnv) => {
     expect(await usdc.balanceOf(deployer.address)).to.be.eq(borrowAmount);
   });
 
-  it('swapBorrowRateMode to stable', async () => {
+  it('swapBorrowRateMode to stable is disabled', async () => {
     const { deployer, dai, usdc, helpersContract } = testEnv;
     const currentInterestRateMode = RateMode.Variable;
     const encoded = await encoder.encodeSwapBorrowRateMode(usdc.address, currentInterestRateMode);
@@ -275,14 +276,14 @@ makeSuite('Pool: L2 functions', (testEnv: TestEnv) => {
     expect(userDataBefore.currentStableDebt).to.be.eq(0);
     expect(userDataBefore.currentVariableDebt).to.be.gt(0);
 
-    expect(await l2Pool.connect(deployer.signer)['swapBorrowRateMode(bytes32)'](encoded))
-      .to.emit(l2Pool, 'SwapBorrowRateMode')
-      .withArgs(usdc.address, deployer.address, Number(currentInterestRateMode));
+    await expect(
+      l2Pool.connect(deployer.signer)['swapBorrowRateMode(bytes32)'](encoded)
+    ).to.be.revertedWith(STABLE_BORROWING_NOT_ENABLED);
 
     const userDataAfter = await helpersContract.getUserReserveData(usdc.address, deployer.address);
 
-    expect(userDataAfter.currentStableDebt).to.be.gt(0);
-    expect(userDataAfter.currentVariableDebt).to.be.eq(0);
+    expect(userDataAfter.currentStableDebt).to.be.eq(0);
+    expect(userDataAfter.currentVariableDebt).to.be.eq(userDataBefore.currentVariableDebt);
   });
 
   it('rebalanceStableBorrowRate (revert expected)', async () => {
@@ -292,24 +293,24 @@ makeSuite('Pool: L2 functions', (testEnv: TestEnv) => {
     const encoded = await encoder.encodeRebalanceStableBorrowRate(usdc.address, deployer.address);
     await expect(
       l2Pool.connect(deployer.signer)['rebalanceStableBorrowRate(bytes32)'](encoded)
-    ).to.be.revertedWith(ProtocolErrors.INTEREST_RATE_REBALANCE_CONDITIONS_NOT_MET);
+    ).to.be.revertedWith(STABLE_BORROWING_NOT_ENABLED);
   });
 
-  it('swapBorrowRateMode to variable', async () => {
+  it('swapBorrowRateMode from stable is disabled', async () => {
     const { deployer, dai, usdc, helpersContract } = testEnv;
     const currentInterestRateMode = RateMode.Stable;
     const encoded = await encoder.encodeSwapBorrowRateMode(usdc.address, currentInterestRateMode);
     const userDataBefore = await helpersContract.getUserReserveData(usdc.address, deployer.address);
-    expect(userDataBefore.currentStableDebt).to.be.gt(0);
-    expect(userDataBefore.currentVariableDebt).to.be.eq(0);
+    expect(userDataBefore.currentStableDebt).to.be.eq(0);
+    expect(userDataBefore.currentVariableDebt).to.be.gt(0);
 
-    expect(await l2Pool.connect(deployer.signer)['swapBorrowRateMode(bytes32)'](encoded))
-      .to.emit(l2Pool, 'SwapBorrowRateMode')
-      .withArgs(usdc.address, deployer.address, Number(currentInterestRateMode));
+    await expect(
+      l2Pool.connect(deployer.signer)['swapBorrowRateMode(bytes32)'](encoded)
+    ).to.be.revertedWith(STABLE_BORROWING_NOT_ENABLED);
 
     const userDataAfter = await helpersContract.getUserReserveData(usdc.address, deployer.address);
     expect(userDataAfter.currentStableDebt).to.be.eq(0);
-    expect(userDataAfter.currentVariableDebt).to.be.gt(0);
+    expect(userDataAfter.currentVariableDebt).to.be.eq(userDataBefore.currentVariableDebt);
   });
 
   it('Repay some', async () => {
@@ -334,7 +335,7 @@ makeSuite('Pool: L2 functions', (testEnv: TestEnv) => {
       .withArgs(usdc.address, deployer.address, deployer.address, repayAmount, false);
 
     const userDebt = await vDebtToken.balanceOf(deployer.address);
-    expect(userDebt).to.be.eq(debtBefore.sub(repayAmount), 'invalid amount repaid');
+    expect(userDebt).to.be.closeTo(debtBefore.sub(repayAmount), 1, 'invalid amount repaid');
     const userBalance = await usdc.balanceOf(deployer.address);
     expect(userBalance).to.be.eq(balanceBefore.sub(repayAmount), 'invalid amount repaid');
   });
@@ -374,7 +375,7 @@ makeSuite('Pool: L2 functions', (testEnv: TestEnv) => {
     const userDebt = await vDebtToken.balanceOf(deployer.address);
     const userBalance = await usdc.balanceOf(deployer.address);
     const userABalance = await aUsdc.balanceOf(deployer.address);
-    expect(userDebt).to.be.eq(debtBefore.sub(repayAmount), 'invalid amount repaid');
+    expect(userDebt).to.be.closeTo(debtBefore.sub(repayAmount), 1, 'invalid amount repaid');
     expect(userBalance).to.be.eq(balanceBefore, 'user balance changed');
     expect(userABalance).to.be.eq(0, 'invalid amount repaid');
   });
@@ -507,9 +508,15 @@ makeSuite('Pool: L2 functions', (testEnv: TestEnv) => {
       .div(daiPrice)
       .mul(BigNumber.from(10).pow(18));
 
+    await expect(
+      pool
+        .connect(borrower.signer)
+        .borrow(dai.address, amountDAIToBorrow, RateMode.Stable, '0', borrower.address)
+    ).to.be.revertedWith(STABLE_BORROWING_NOT_ENABLED);
+
     await pool
       .connect(borrower.signer)
-      .borrow(dai.address, amountDAIToBorrow, RateMode.Stable, '0', borrower.address);
+      .borrow(dai.address, amountDAIToBorrow, RateMode.Variable, '0', borrower.address);
 
     const userGlobalDataAfter = await pool.getUserAccountData(borrower.address);
     expect(userGlobalDataAfter.currentLiquidationThreshold).to.be.equal(8500, INVALID_HF);
@@ -535,7 +542,7 @@ makeSuite('Pool: L2 functions', (testEnv: TestEnv) => {
       borrower.address
     );
 
-    const amountToLiquidate = userReserveDataBefore.currentStableDebt.div(2);
+    const amountToLiquidate = userReserveDataBefore.currentVariableDebt.div(2);
 
     await increaseTime(100);
 
@@ -583,15 +590,14 @@ makeSuite('Pool: L2 functions', (testEnv: TestEnv) => {
       (await hre.ethers.provider.getBlock(tx.blockNumber)).timestamp
     );
 
-    const stableDebtBeforeTx = calcExpectedStableDebtTokenBalance(
-      userReserveDataBefore.principalStableDebt,
-      userReserveDataBefore.stableBorrowRate,
-      userReserveDataBefore.stableRateLastUpdated,
+    const variableDebtBeforeTx = calcExpectedVariableDebtTokenBalance(
+      daiReserveDataBefore,
+      userReserveDataBefore,
       txTimestamp
     );
 
-    expect(userReserveDataAfter.currentStableDebt).to.be.closeTo(
-      stableDebtBeforeTx.sub(amountToLiquidate),
+    expect(userReserveDataAfter.currentVariableDebt).to.be.closeTo(
+      variableDebtBeforeTx.sub(amountToLiquidate),
       2,
       'Invalid user debt after liquidation'
     );
@@ -670,9 +676,15 @@ makeSuite('Pool: L2 functions', (testEnv: TestEnv) => {
       .div(daiPrice)
       .mul(BigNumber.from(10).pow(18));
 
+    await expect(
+      pool
+        .connect(borrower.signer)
+        .borrow(dai.address, amountDAIToBorrow, RateMode.Stable, '0', borrower.address)
+    ).to.be.revertedWith(STABLE_BORROWING_NOT_ENABLED);
+
     await pool
       .connect(borrower.signer)
-      .borrow(dai.address, amountDAIToBorrow, RateMode.Stable, '0', borrower.address);
+      .borrow(dai.address, amountDAIToBorrow, RateMode.Variable, '0', borrower.address);
 
     const userGlobalDataAfter = await pool.getUserAccountData(borrower.address);
     expect(userGlobalDataAfter.currentLiquidationThreshold).to.be.equal(8500, INVALID_HF);

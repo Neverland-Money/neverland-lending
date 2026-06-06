@@ -1,6 +1,5 @@
 const { expect } = require('chai');
 import { utils, BigNumber } from 'ethers';
-import { ReserveData, UserReserveData } from './helpers/utils/interfaces';
 import { ProtocolErrors, RateMode } from '../helpers/types';
 import { AAVE_REFERRAL, MAX_UINT_AMOUNT, MAX_UNBACKED_MINT_CAP } from '../helpers/constants';
 import { convertToCurrencyDecimals } from '../helpers/contracts-helpers';
@@ -13,21 +12,10 @@ import {
   evmRevert,
   advanceTimeAndBlock,
 } from '@aave/deploy-v3';
-import { getReserveData, getUserData } from './helpers/utils/helpers';
-import { getTxCostAndTimestamp } from './helpers/actions';
+import { getUserData } from './helpers/utils/helpers';
 import AaveConfig from '@aave/deploy-v3/dist/markets/test';
 import { getACLManager } from '@aave/deploy-v3/dist/helpers/contract-getters';
-import {
-  calcExpectedReserveDataAfterMintUnbacked,
-  configuration as calculationsConfiguration,
-} from './helpers/utils/calculations';
-
-const expectEqual = (
-  actual: UserReserveData | ReserveData,
-  expected: UserReserveData | ReserveData
-) => {
-  expect(actual).to.be.almostEqualOrEqual(expected);
-};
+import { configuration as calculationsConfiguration } from './helpers/utils/calculations';
 
 makeSuite('Isolation mode', (testEnv: TestEnv) => {
   const ISOLATED_COLLATERAL_SUPPLIER_ROLE = utils.keccak256(
@@ -213,8 +201,8 @@ makeSuite('Isolation mode', (testEnv: TestEnv) => {
     await evmRevert(snap);
   });
 
-  it('User 2 (as bridge) mint 100 unbacked dai to user 1. Checks that dai is NOT activated as collateral', async () => {
-    const { users, riskAdmin, pool, configurator, dai, helpersContract } = testEnv;
+  it('User 2 (as bridge) cannot mint unbacked DAI', async () => {
+    const { users, riskAdmin, pool, configurator, dai } = testEnv;
 
     // configure unbacked cap for dai
     expect(await configurator.connect(riskAdmin.signer).setUnbackedMintCap(dai.address, '10'));
@@ -224,25 +212,13 @@ makeSuite('Isolation mode', (testEnv: TestEnv) => {
         .setUnbackedMintCap(dai.address, MAX_UNBACKED_MINT_CAP)
     );
 
-    const reserveDataBefore = await getReserveData(helpersContract, dai.address);
-    const tx = await waitForTx(
-      await pool.connect(users[2].signer).mintUnbacked(dai.address, mintAmount, users[1].address, 0)
-    );
-    const { txTimestamp } = await getTxCostAndTimestamp(tx);
-    const expectedDataAfter = calcExpectedReserveDataAfterMintUnbacked(
-      mintAmount.toString(),
-      reserveDataBefore,
-      txTimestamp
-    );
-    const reserveDataAfter = await getReserveData(helpersContract, dai.address);
-    expectEqual(reserveDataAfter, expectedDataAfter);
-
-    const userData = await helpersContract.getUserReserveData(dai.address, users[1].address);
-    expect(userData.usageAsCollateralEnabled).to.be.eq(false);
+    await expect(
+      pool.connect(users[2].signer).mintUnbacked(dai.address, mintAmount, users[1].address, 0)
+    ).to.be.revertedWith('Neverland: portal/bridge disabled');
   });
 
-  it('User 2 (as bridge) mint 100 unbacked aave (isolated) to user 3. Checks that aave is NOT activated as collateral', async () => {
-    const { users, riskAdmin, pool, configurator, aave, helpersContract } = testEnv;
+  it('User 2 (as bridge) cannot mint unbacked isolated AAVE', async () => {
+    const { users, riskAdmin, pool, configurator, aave } = testEnv;
 
     // configure unbacked cap for dai
     expect(await configurator.connect(riskAdmin.signer).setUnbackedMintCap(aave.address, '10'));
@@ -252,23 +228,9 @@ makeSuite('Isolation mode', (testEnv: TestEnv) => {
         .setUnbackedMintCap(aave.address, MAX_UNBACKED_MINT_CAP)
     );
 
-    const reserveDataBefore = await getReserveData(helpersContract, aave.address);
-    const tx = await waitForTx(
-      await pool
-        .connect(users[2].signer)
-        .mintUnbacked(aave.address, mintAmount, users[3].address, 0)
-    );
-    const { txTimestamp } = await getTxCostAndTimestamp(tx);
-    const expectedDataAfter = calcExpectedReserveDataAfterMintUnbacked(
-      mintAmount.toString(),
-      reserveDataBefore,
-      txTimestamp
-    );
-    const reserveDataAfter = await getReserveData(helpersContract, aave.address);
-    expectEqual(reserveDataAfter, expectedDataAfter);
-
-    const userData = await helpersContract.getUserReserveData(aave.address, users[3].address);
-    expect(userData.usageAsCollateralEnabled).to.be.eq(false);
+    await expect(
+      pool.connect(users[2].signer).mintUnbacked(aave.address, mintAmount, users[3].address, 0)
+    ).to.be.revertedWith('Neverland: portal/bridge disabled');
   });
 
   it('User 2 supply 100 DAI, transfers to user 1. Checks that DAI is NOT activated as collateral for user 1', async () => {
@@ -492,17 +454,27 @@ makeSuite('Isolation mode', (testEnv: TestEnv) => {
 
     const isolationModeTotalDebtBefore = (await pool.getReserveData(aave.address))
       .isolationModeTotalDebt;
-    const expectedAmountAfter = isolationModeTotalDebtBefore.sub(
-      borrowAmount.div(2).div(BigNumber.from(10).pow(16))
+    const borrowerDebtBefore = await helpersContract.getUserReserveData(
+      dai.address,
+      borrower.address
     );
 
     await expect(
       pool
         .connect(liquidator.signer)
         .liquidationCall(aave.address, dai.address, borrower.address, borrowAmount.div(2), false)
-    )
-      .to.emit(pool, 'IsolationModeTotalDebtUpdated')
-      .withArgs(aave.address, expectedAmountAfter);
+    ).to.emit(pool, 'IsolationModeTotalDebtUpdated');
+
+    const borrowerDebtAfter = await helpersContract.getUserReserveData(
+      dai.address,
+      borrower.address
+    );
+    const realizedDebtRepaid = borrowerDebtBefore.currentVariableDebt.sub(
+      borrowerDebtAfter.currentVariableDebt
+    );
+    const expectedAmountAfter = isolationModeTotalDebtBefore.sub(
+      realizedDebtRepaid.div(BigNumber.from(10).pow(16))
+    );
 
     const isolationModeTotalDebtAfter = (await pool.getReserveData(aave.address))
       .isolationModeTotalDebt;
