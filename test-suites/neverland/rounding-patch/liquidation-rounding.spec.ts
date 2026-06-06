@@ -1,11 +1,12 @@
 /*
  * Liquidation rounding coverage on the REAL patched Pool (makeSuite harness).
  *
- * Re-expresses, on the LENDING makeSuite fixture and VARIABLE-rate only, the
- * POOL-repo liquidation invariants from
- *   tests/rounding/05-liquidation-rounding.spec.ts
- *   tests/rounding/pool-flashloan-liquidation.spec.ts (the `liquidationCall`
- *   describe block, especially the closed-form fee split and the K-loop).
+ * These tests pin the liquidation invariants this repo must preserve under
+ * directional rounding and the retained single-category eMode model. Every
+ * case is expressed through this repo's makeSuite fixture and public Pool
+ * entrypoints, except the standalone-config zeroing cases. Those intentionally
+ * use hardhat_setStorageAt to simulate a governance-level config word after
+ * existing suppliers already hold collateral.
  *
  * Behaviors:
  *   (a) Collateral/debt ceil-floor split favors the protocol. With a
@@ -45,6 +46,31 @@
  *   (f) The collateral-capped branch repays the ceil-rounded debt needed to
  *       consume the available collateral.
  *
+ *   (g) eMode collateral stays liquidatable when its STANDALONE LTV/LT/bonus
+ *       are zeroed. This pins the local safety rule for removing the standalone
+ *       `liquidationThreshold != 0` liquidation guard: account data must value
+ *       the collateral with the active eMode LT, and liquidation must seize it
+ *       with the active eMode bonus. The configurator keeps LT and bonus paired,
+ *       so effective LT > 0 iff effective bonus > 0 iff the collateral is
+ *       seizable, regardless of the now-zeroed standalone word.
+ *
+ *   (h) The symmetric NEGATIVE non-eMode case: a borrower NOT in any eMode
+ *       whose collateral has its standalone bottom-48 bits zeroed (effective
+ *       LT == 0, effective bonus == 0) yields NO liquidator profit. With no
+ *       bonus override, _calculateAvailableCollateralToLiquidate floors the
+ *       seizable collateral to 0 (percentMulFloor(base, 0)), so the call either
+ *       reverts or seizes zero collateral; either way the liquidator gains no
+ *       collateral and the borrower keeps it. This is the WEAK true invariant
+ *       (no positive seizure), not "always reverts".
+ *
+ * Cases (g)/(h) write the reserve configuration word directly via
+ * hardhat_setStorageAt. That is an invariant simulation of a governance zeroing,
+ * NOT a normal admin sequence: configureReserveAsCollateral refuses to lower
+ * LTV/LT/bonus while suppliers exist, so the only way to reach the "supplied
+ * collateral with a zeroed standalone word" state under test is a direct storage
+ * poke. The bottom 48 bits are exactly LTV | LT | bonus; the decimals field
+ * (bits 48-55) is preserved so collateral valuation still works.
+ *
  * Prices are moved via the mutable PriceOracle (setAssetPrice) after wiring
  * addressesProvider.setPriceOracle(oracle.address) in before(); restored in
  * after(). Per-test isolation via evmSnapshot/evmRevert.
@@ -61,9 +87,9 @@ import {
   IStableDebtToken__factory,
   waitForTx,
 } from '@aave/deploy-v3';
-import { MAX_UINT_AMOUNT, oneEther } from '../../../helpers/constants';
+import { MAX_UINT_AMOUNT, ZERO_ADDRESS, oneEther } from '../../../helpers/constants';
 import { convertToCurrencyDecimals } from '../../../helpers/contracts-helpers';
-import { RateMode } from '../../../helpers/types';
+import { ProtocolErrors, RateMode } from '../../../helpers/types';
 import { makeSuite, TestEnv } from '../../helpers/make-suite';
 import '../../helpers/utils/wadraymath';
 
@@ -90,6 +116,24 @@ const rayDivCeil = (a: BigNumber, b: BigNumber) => ceilDiv(a.mul(RAY), b);
 const LIQUIDATION_CALL_IFACE = [
   'event LiquidationCall(address indexed collateralAsset,address indexed debtAsset,address indexed user,uint256 debtToCover,uint256 liquidatedCollateralAmount,address liquidator,bool receiveAToken)',
 ];
+
+// Canonical PoolStorage `_reserves` mapping slot. PoolStorage is the first
+// declared storage after VersionedInitializable, which lays out
+// lastInitializedRevision (slot 0), initializing (slot 1) and ______gap[50]
+// (slots 2..51), so `_reserves` lands at slot 52. Confirmed from the compiled
+// Pool storageLayout, and the helper below reads the config back to fail loud
+// if this ever drifts. `_reserves[asset].configuration.data` is the first word
+// of the ReserveData struct, so the config word sits at the mapping slot itself.
+const POOL_RESERVES_SLOT = 52;
+// Bottom 48 bits of the reserve configuration word = LTV (0..15) | LT (16..31)
+// | bonus (32..47). The decimals field (bits 48..55) and every higher flag are
+// preserved, so collateral valuation in getUserAccountData keeps working.
+const BASE_COLLATERAL_PARAMS_MASK = BigNumber.from(2).pow(48).sub(1);
+
+const reserveConfigurationStorageSlot = (asset: string): string =>
+  utils.keccak256(
+    utils.defaultAbiCoder.encode(['address', 'uint256'], [asset, POOL_RESERVES_SLOT])
+  );
 
 makeSuite('Neverland rounding patch: liquidation rounding', (testEnv: TestEnv) => {
   let snap: string;
@@ -122,6 +166,33 @@ makeSuite('Neverland rounding patch: liquidation rounding', (testEnv: TestEnv) =
       .shr(reserveId * 2 + 1)
       .and(1)
       .toNumber();
+  };
+
+  // Zero ONLY the standalone LTV/LT/bonus bits of a reserve's configuration
+  // word via a direct storage poke, leaving every other field (decimals,
+  // flags, caps, eMode category, ...) intact. The public configurator refuses
+  // to lower these fields while liquidity exists (_checkNoSuppliers), so this
+  // is the test-only path to the "supplied collateral with a zeroed standalone
+  // word" state under regression. Reads the config back and asserts the bottom
+  // 48 bits are 0 and nothing above them changed, so a wrong slot fails loud.
+  const zeroStandaloneCollateralParams = async (asset: string): Promise<void> => {
+    const { pool } = testEnv;
+    const before = BigNumber.from((await pool.getConfiguration(asset)).data);
+    const cleared = before.sub(before.and(BASE_COLLATERAL_PARAMS_MASK));
+    await hre.ethers.provider.send('hardhat_setStorageAt', [
+      pool.address,
+      reserveConfigurationStorageSlot(asset),
+      utils.hexZeroPad(cleared.toHexString(), 32),
+    ]);
+    const after = BigNumber.from((await pool.getConfiguration(asset)).data);
+    expect(after.and(BASE_COLLATERAL_PARAMS_MASK)).to.eq(
+      0,
+      'standalone LTV/LT/bonus bits must be zeroed (slot resolved correctly)'
+    );
+    expect(after.shr(48)).to.eq(
+      before.shr(48),
+      'only the bottom 48 bits may change; decimals/flags must be intact'
+    );
   };
 
   it('(a) realizes the exact closed-form protocol-fee collateral split (protocol rounds up, liquidator down)', async () => {
@@ -983,5 +1054,222 @@ makeSuite('Neverland rounding patch: liquidation rounding', (testEnv: TestEnv) =
       'test premise must distinguish ceil from half-up'
     );
     expect(liquidationEvent!.args.liquidatedCollateralAmount).to.eq(userCollateralBalance);
+  });
+
+  it('(g) eMode collateral stays liquidatable when its standalone LTV/LT/bonus are zeroed', async () => {
+    const {
+      pool,
+      users: [depositor, borrower, liquidator],
+      dai,
+      usdc,
+      aDai,
+      oracle,
+      configurator,
+      poolAdmin,
+    } = testEnv;
+
+    // eMode category #1: DAI (collateral) + USDC (debt), both in-category.
+    // priceSource ZERO so each asset keeps its standalone oracle and the only
+    // capacity expansion comes from the elevated category LTV/LT. The category
+    // LTV/LT must be >= the in-category standalone max (DAI 7500/8000, USDC
+    // 8000/8500), so 9000/9500 satisfies validateSetEModeCategoryParams.
+    const EMODE_ID = 1;
+    const EMODE_LTV = BigNumber.from(9000);
+    const EMODE_LT = BigNumber.from(9500);
+    const EMODE_LB = BigNumber.from(10100);
+    await waitForTx(
+      await configurator
+        .connect(poolAdmin.signer)
+        .setEModeCategory(EMODE_ID, EMODE_LTV, EMODE_LT, EMODE_LB, ZERO_ADDRESS, 'DAI-USDC')
+    );
+    await waitForTx(
+      await configurator.connect(poolAdmin.signer).setAssetEModeCategory(dai.address, EMODE_ID)
+    );
+    await waitForTx(
+      await configurator.connect(poolAdmin.signer).setAssetEModeCategory(usdc.address, EMODE_ID)
+    );
+
+    // Seed USDC debt liquidity.
+    const usdcLiquidity = await convertToCurrencyDecimals(usdc.address, '1000000');
+    await usdc.connect(depositor.signer)['mint(uint256)'](usdcLiquidity);
+    await usdc.connect(depositor.signer).approve(pool.address, MAX_UINT_AMOUNT);
+    await pool
+      .connect(depositor.signer)
+      .supply(usdc.address, usdcLiquidity, depositor.address, '0');
+
+    // Borrower enters eMode, supplies DAI collateral, borrows USDC at ~85% of
+    // collateral so the eMode-LT HF (0.95) starts above 1 but a modest debt
+    // re-price pushes it under.
+    await waitForTx(await pool.connect(borrower.signer).setUserEMode(EMODE_ID));
+    const daiCollateral = await convertToCurrencyDecimals(dai.address, '10000');
+    await dai.connect(borrower.signer)['mint(uint256)'](daiCollateral);
+    await dai.connect(borrower.signer).approve(pool.address, MAX_UINT_AMOUNT);
+    await pool.connect(borrower.signer).supply(dai.address, daiCollateral, borrower.address, '0');
+
+    const accountData = await pool.getUserAccountData(borrower.address);
+    const usdcPrice0 = await oracle.getAssetPrice(usdc.address);
+    const usdcUnit = BigNumber.from(10).pow(6);
+    const targetDebtBase = accountData.totalCollateralBase.mul(85).div(100);
+    const borrowUsdc = targetDebtBase.mul(usdcUnit).div(usdcPrice0);
+    await pool
+      .connect(borrower.signer)
+      .borrow(usdc.address, borrowUsdc, RateMode.Variable, '0', borrower.address);
+
+    // Zero ONLY the DAI standalone LTV/LT/bonus bits while keeping the user's
+    // collateral flag and the eMode binding. configureReserveAsCollateral would
+    // refuse this (_checkNoSuppliers, PoolConfigurator.sol:159), hence the
+    // direct storage poke.
+    await zeroStandaloneCollateralParams(dai.address);
+
+    // Effective params are still the eMode values: getUserAccountData must
+    // report collateral > 0, LT == eMode LT, ltv == eMode LTV, HF > 1. This
+    // proves that account valuation follows the active eMode params, not the
+    // zeroed standalone collateral word.
+    const before = await pool.getUserAccountData(borrower.address);
+    expect(before.totalCollateralBase).to.be.gt(0, 'eMode collateral must still be valued');
+    expect(before.currentLiquidationThreshold).to.eq(EMODE_LT, 'effective LT must be the eMode LT');
+    expect(before.ltv).to.eq(EMODE_LTV, 'effective LTV must be the eMode LTV');
+    expect(before.healthFactor).to.be.gt(oneEther, 'HF must start above 1 with the eMode LT');
+
+    // Bump the USDC (debt) price so HF drops below 1.
+    await waitForTx(await oracle.setAssetPrice(usdc.address, usdcPrice0.percentMul(11500)));
+    const hf = (await pool.getUserAccountData(borrower.address)).healthFactor;
+    expect(hf).to.be.lt(oneEther, 'debt re-price must push HF below 1');
+
+    // Liquidator funds USDC and liquidates with MAX_UINT_AMOUNT. The active
+    // eMode bonus makes the zeroed-standalone DAI collateral seizable, so the
+    // debt must strictly decrease and the liquidator must receive DAI
+    // collateral.
+    const liquidatorBudget = await convertToCurrencyDecimals(usdc.address, '1000000');
+    await usdc.connect(liquidator.signer)['mint(uint256)'](liquidatorBudget);
+    await usdc.connect(liquidator.signer).approve(pool.address, MAX_UINT_AMOUNT);
+
+    const borrowerDebtBefore = await pool.getUserAccountData(borrower.address);
+    const liquidatorDaiBefore = await dai.balanceOf(liquidator.address);
+    const borrowerAColBefore = await aDai.balanceOf(borrower.address);
+
+    await waitForTx(
+      await pool
+        .connect(liquidator.signer)
+        .liquidationCall(dai.address, usdc.address, borrower.address, MAX_UINT_AMOUNT, false)
+    );
+
+    const borrowerDebtAfter = await pool.getUserAccountData(borrower.address);
+    const liquidatorDaiAfter = await dai.balanceOf(liquidator.address);
+    const borrowerAColAfter = await aDai.balanceOf(borrower.address);
+
+    // The zeroed-standalone eMode collateral WAS seizable: debt strictly fell,
+    // the liquidator received DAI, and the borrower's collateral strictly fell.
+    expect(borrowerDebtAfter.totalDebtBase).to.be.lt(
+      borrowerDebtBefore.totalDebtBase,
+      'liquidation must strictly reduce the borrower debt'
+    );
+    expect(liquidatorDaiAfter.sub(liquidatorDaiBefore)).to.be.gt(
+      0,
+      'liquidator must receive seized DAI collateral'
+    );
+    expect(borrowerAColAfter).to.be.lt(
+      borrowerAColBefore,
+      'borrower collateral must strictly decrease'
+    );
+  });
+
+  it('(h) non-eMode collateral with zeroed standalone params yields no liquidator profit', async () => {
+    const {
+      pool,
+      users: [depositor, borrower, liquidator],
+      dai,
+      weth,
+      aWETH,
+      oracle,
+      configurator,
+      poolAdmin,
+    } = testEnv;
+
+    // No protocol fee on WETH: with bonus == 0 the protocol-fee branch would
+    // hit percentDivFloor(_, 0) (a divide-by-zero revert); disabling it lets us
+    // observe the WEAKER true invariant (zero seizure, no liquidator profit)
+    // rather than a branch-dependent revert.
+    await waitForTx(
+      await configurator.connect(poolAdmin.signer).setLiquidationProtocolFee(weth.address, 0)
+    );
+
+    // Seed DAI debt liquidity.
+    const daiLiquidity = await convertToCurrencyDecimals(dai.address, '100000');
+    await dai.connect(depositor.signer)['mint(uint256)'](daiLiquidity);
+    await dai.connect(depositor.signer).approve(pool.address, MAX_UINT_AMOUNT);
+    await pool.connect(depositor.signer).supply(dai.address, daiLiquidity, depositor.address, '0');
+
+    // Borrower (NOT in any eMode) posts WETH collateral and borrows DAI near
+    // the standalone LTV cap.
+    const wethCollateral = await convertToCurrencyDecimals(weth.address, '10');
+    await weth.connect(borrower.signer)['mint(address,uint256)'](borrower.address, wethCollateral);
+    await weth.connect(borrower.signer).approve(pool.address, MAX_UINT_AMOUNT);
+    await pool.connect(borrower.signer).supply(weth.address, wethCollateral, borrower.address, '0');
+    await pool.connect(borrower.signer).setUserUseReserveAsCollateral(weth.address, true);
+    expect(await pool.getUserEMode(borrower.address)).to.eq(0, 'borrower must not be in eMode');
+
+    const accountData = await pool.getUserAccountData(borrower.address);
+    const daiPrice0 = await oracle.getAssetPrice(dai.address);
+    const toBorrow = await convertToCurrencyDecimals(
+      dai.address,
+      accountData.availableBorrowsBase.div(daiPrice0).percentMul(9500).toString()
+    );
+    await pool
+      .connect(borrower.signer)
+      .borrow(dai.address, toBorrow, RateMode.Variable, '0', borrower.address);
+
+    // Zero the WETH standalone LTV/LT/bonus bits. With no eMode override the
+    // EFFECTIVE LT becomes 0, so this is the borrower's only collateral now
+    // contributing nothing to the LT-weighted HF, which collapses HF to 0.
+    await zeroStandaloneCollateralParams(weth.address);
+    const hf = (await pool.getUserAccountData(borrower.address)).healthFactor;
+    expect(hf).to.be.lt(oneEther, 'zeroed effective LT must drop HF below 1');
+
+    // Liquidator funds DAI.
+    const liquidatorBudget = await convertToCurrencyDecimals(dai.address, '100000');
+    await dai.connect(liquidator.signer)['mint(uint256)'](liquidatorBudget);
+    await dai.connect(liquidator.signer).approve(pool.address, MAX_UINT_AMOUNT);
+
+    const liquidatorWethBefore = await weth.balanceOf(liquidator.address);
+    const liquidatorAWethBefore = await aWETH.balanceOf(liquidator.address);
+    const borrowerAWethBefore = await aWETH.balanceOf(borrower.address);
+
+    // No bonus -> _calculateAvailableCollateralToLiquidate floors the seizable
+    // collateral to 0 (percentMulFloor(base, 0)). The call may revert OR seize
+    // zero collateral depending on the branch: here it burns 0 collateral, and
+    // AToken.burn requires a non-zero scaled amount, so on this no-fee market it
+    // reverts with INVALID_BURN_AMOUNT ('25'). (With a protocol fee enabled it
+    // would instead hit percentDivFloor(_, 0).) Either way the liquidator gains
+    // no collateral. Asserting the SPECIFIC seizure-stage revert (not a generic
+    // .reverted) proves the path ran past validateLiquidationCall (the guard the
+    // patch changed) and reached the seizure logic, so the no-profit deltas
+    // below are observed on a genuine attempt, not a vacuous early no-op.
+    await expect(
+      pool
+        .connect(liquidator.signer)
+        .liquidationCall(weth.address, dai.address, borrower.address, MAX_UINT_AMOUNT, false)
+    ).to.be.revertedWith(ProtocolErrors.INVALID_BURN_AMOUNT);
+
+    const liquidatorWethAfter = await weth.balanceOf(liquidator.address);
+    const liquidatorAWethAfter = await aWETH.balanceOf(liquidator.address);
+    const borrowerAWethAfter = await aWETH.balanceOf(borrower.address);
+
+    // No liquidator profit on the zeroed-bonus collateral: the liquidator
+    // received zero WETH (underlying and aToken), and the borrower kept its
+    // collateral. The WEAK true invariant (no positive seizure), independent of
+    // whether the protocol-fee branch reverts or the else-branch returns zero.
+    expect(liquidatorWethAfter.sub(liquidatorWethBefore)).to.eq(
+      0,
+      'liquidator must not receive any underlying WETH'
+    );
+    expect(liquidatorAWethAfter.sub(liquidatorAWethBefore)).to.eq(
+      0,
+      'liquidator must not receive any aWETH'
+    );
+    expect(borrowerAWethAfter).to.eq(
+      borrowerAWethBefore,
+      'borrower must keep its collateral (no positive seizure)'
+    );
   });
 });
