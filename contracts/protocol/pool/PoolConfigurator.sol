@@ -90,8 +90,8 @@ contract PoolConfigurator is VersionedInitializable, IPoolConfigurator {
 
   /// @inheritdoc IPoolConfigurator
   function dropReserve(address asset) external override onlyPoolAdmin {
-    _pool.dropReserve(asset);
-    emit ReserveDropped(asset);
+    asset;
+    revert(Errors.OPERATION_NOT_SUPPORTED);
   }
 
   /// @inheritdoc IPoolConfigurator

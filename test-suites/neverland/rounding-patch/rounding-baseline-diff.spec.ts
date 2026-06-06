@@ -104,6 +104,20 @@ describe('Neverland rounding patch baseline diff', () => {
     expect(targetPool).to.include('Neverland: portal/bridge disabled');
   });
 
+  it('keeps reserve removal disabled in the canonical Pool and configurator runtime', () => {
+    const targetPool = repoFile('contracts/protocol/pool/Pool.sol');
+    const targetConfigurator = repoFile('contracts/protocol/pool/PoolConfigurator.sol');
+
+    expect(targetPool).to.not.include('PoolLogic.executeDropReserve');
+    expect(targetConfigurator).to.not.include('_pool.dropReserve(asset)');
+    expect(targetPool).to.match(
+      /function dropReserve\(address asset\)[\s\S]+?revert\(Errors\.OPERATION_NOT_SUPPORTED\);/
+    );
+    expect(targetConfigurator).to.match(
+      /function dropReserve\(address asset\)[\s\S]+?revert\(Errors\.OPERATION_NOT_SUPPORTED\);/
+    );
+  });
+
   it('keeps stable-rate execution disabled at every retained ABI entrypoint', () => {
     const targetBorrowLogic = repoFile('contracts/protocol/libraries/logic/BorrowLogic.sol');
 

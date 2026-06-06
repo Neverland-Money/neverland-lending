@@ -1,7 +1,7 @@
 import { evmRevert, evmSnapshot, waitForTx } from '@aave/deploy-v3';
 import { getFirstSigner } from '@aave/deploy-v3/dist/helpers/utilities/signer';
 import { expect } from 'chai';
-import { BigNumberish } from 'ethers';
+import { BigNumberish, utils } from 'ethers';
 import { ethers } from 'hardhat';
 import { MAX_UINT_AMOUNT, ZERO_ADDRESS } from '../../../helpers/constants';
 import { convertToCurrencyDecimals } from '../../../helpers/contracts-helpers';
@@ -118,6 +118,43 @@ makeSuite('Neverland rounding patch runtime gates', (testEnv: TestEnv) => {
     await expect(pool.connect(user.signer).backUnbacked(dai.address, 1, 0)).to.be.revertedWith(
       'Neverland: portal/bridge disabled'
     );
+  });
+
+  it('hard-reverts dropReserve while preserving the ABI selector', async () => {
+    const { configurator, pool, poolAdmin, dai } = testEnv;
+    const reservesBefore = await pool.getReservesList();
+
+    await expect(
+      configurator.connect(poolAdmin.signer).dropReserve(dai.address)
+    ).to.be.revertedWith(ProtocolErrors.OPERATION_NOT_SUPPORTED);
+
+    expect(await pool.getReservesList()).to.deep.eq(reservesBefore);
+  });
+
+  it('pins default fixture assumptions for stable debt, portals, bridge role, and sentinel', async () => {
+    const { addressesProvider, aclManager, helpersContract, pool } = testEnv;
+
+    expect(await addressesProvider.getPriceOracleSentinel()).to.eq(
+      ZERO_ADDRESS,
+      'rounding release requires the retained v3.0.2 sentinel hook to be disabled'
+    );
+
+    for (const asset of await pool.getReservesList()) {
+      const reserveData = await helpersContract.getReserveData(asset);
+
+      expect(reserveData.totalStableDebt, `stable debt exists for ${asset}`).to.eq(0);
+      expect(reserveData.unbacked, `unbacked portal residue exists for ${asset}`).to.eq(0);
+    }
+
+    const bridgeRole = await aclManager.BRIDGE_ROLE();
+    const bridgeGrants = await ethers.provider.getLogs({
+      address: aclManager.address,
+      fromBlock: 0,
+      toBlock: 'latest',
+      topics: [utils.id('RoleGranted(bytes32,address,address)'), bridgeRole],
+    });
+
+    expect(bridgeGrants.length).to.eq(0, 'BRIDGE_ROLE must never be granted in this market');
   });
 
   it('deploys the Pool implementation with patched logic libraries and without BridgeLogic', async () => {

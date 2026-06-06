@@ -588,7 +588,8 @@ contract Pool is VersionedInitializable, PoolStorage, IPool {
 
   /// @inheritdoc IPool
   function dropReserve(address asset) external virtual override onlyPoolConfigurator {
-    PoolLogic.executeDropReserve(_reserves, _reservesList, asset);
+    asset;
+    revert(Errors.OPERATION_NOT_SUPPORTED);
   }
 
   /// @inheritdoc IPool
