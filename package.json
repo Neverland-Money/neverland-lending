@@ -39,6 +39,7 @@
     "test:subgraph:scenarios": ". ./setup-test-env.sh && TS_NODE_TRANSPILE_ONLY=1 hardhat --network hardhatevm_docker test test-suites/__setup.spec.ts test-suites/subgraph-scenarios.spec.ts",
     "check:sizes": "TS_NODE_TRANSPILE_ONLY=1 ts-node scripts/rounding/check-sizes.ts",
     "check:selectors": "TS_NODE_TRANSPILE_ONLY=1 ts-node scripts/rounding/check-selectors.ts",
+    "check:live-assumptions": "TS_NODE_TRANSPILE_ONLY=1 hardhat run scripts/rounding/check-live-assumptions.ts",
     "check:rounding-gates": "npm run check:sizes && npm run check:selectors",
     "ci:test": "npm run test",
     "ci:clean": "rm -rf ./artifacts ./cache ./types ./temp-artifacts ./dist",
