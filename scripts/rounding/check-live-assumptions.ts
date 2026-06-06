@@ -87,13 +87,13 @@ async function resolveAddressesProvider(): Promise<Contract> {
 
 async function scanBridgeRole(
   aclManager: Contract,
-  targetBlock: number
+  targetBlock: number,
+  fromBlock: number
 ): Promise<{ bridgeRole: string; grants: string[]; activeMembers: string[] }> {
   const provider = hre.ethers.provider;
   const bridgeRole = await aclManager.BRIDGE_ROLE({ blockTag: targetBlock });
   const roleGrantedTopic = utils.id('RoleGranted(bytes32,address,address)');
   const roleRevokedTopic = utils.id('RoleRevoked(bytes32,address,address)');
-  const fromBlock = getEnvNumber('ROUNDING_PATCH_ACL_FROM_BLOCK', 0);
   const step = getEnvNumber('ROUNDING_PATCH_LOG_STEP', DEFAULT_LOG_STEP);
   const members = new Set<string>();
   const grants = new Set<string>();
@@ -128,6 +128,13 @@ async function scanBridgeRole(
 async function main() {
   const provider = hre.ethers.provider;
   const targetBlock = getEnvNumber('ROUNDING_PATCH_BLOCK', await provider.getBlockNumber());
+  const aclFromBlock = getEnvNumber('ROUNDING_PATCH_ACL_FROM_BLOCK', 0);
+  if (aclFromBlock > targetBlock) {
+    throw new Error(
+      `ROUNDING_PATCH_ACL_FROM_BLOCK (${aclFromBlock}) must be less than or equal to target block (${targetBlock})`
+    );
+  }
+
   const addressesProvider = await resolveAddressesProvider();
   const poolAddress = await addressesProvider.getPool({ blockTag: targetBlock });
   const aclManagerAddress = await addressesProvider.getACLManager({ blockTag: targetBlock });
@@ -167,7 +174,7 @@ async function main() {
     });
   }
 
-  const bridge = await scanBridgeRole(aclManager, targetBlock);
+  const bridge = await scanBridgeRole(aclManager, targetBlock, aclFromBlock);
   const requireZeroSentinel = process.env.ROUNDING_PATCH_REQUIRE_ZERO_SENTINEL !== 'false';
 
   console.log(`Neverland rounding-patch live assumptions at block ${targetBlock}`);
