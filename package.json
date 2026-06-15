@@ -1,6 +1,6 @@
 {
   "name": "@neverland-money/lending-core",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Neverland Lending protocol, initially derived 1:1 from @aave/core-v3 v1.19.3",
   "files": [
     "README_UPSTREAM.md",
@@ -10,6 +10,28 @@
     "dist"
   ],
   "main": "dist/helpers/index.js",
+  "types": "dist/types/helpers/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/types/helpers/index.d.ts",
+      "require": "./dist/helpers/index.js",
+      "default": "./dist/helpers/index.js"
+    },
+    "./types": {
+      "types": "./dist/types/types/index.d.ts",
+      "require": "./dist/types/index.js",
+      "default": "./dist/types/index.js"
+    },
+    "./types/*": {
+      "types": "./dist/types/types/*.d.ts",
+      "require": "./dist/types/*.js",
+      "default": "./dist/types/*.js"
+    },
+    "./artifacts/*": "./artifacts/*",
+    "./contracts/*": "./contracts/*",
+    "./dist/*": "./dist/*",
+    "./package.json": "./package.json"
+  },
   "engines": {
     "node": ">=22.0.0 <23"
   },
@@ -31,8 +53,15 @@
     "ci:test": ". ./setup-test-env.sh  && npm run test",
     "ci:clean": "rm -rf ./artifacts ./cache ./types ./temp-artifacts",
     "prepare": "husky install",
-    "build": "tsc --project lib.tsconfig.json",
-    "prepublish": "npm run compile && npm run build"
+    "build": "rm -rf ./dist && tsc --project lib.tsconfig.json",
+    "verify:package": "node scripts/verify-package-release.js",
+    "prepack": "npm run compile:clean && npm run build && npm run verify:package",
+    "prepublishOnly": "npm run verify:package"
+  },
+  "dependencies": {
+    "eth-sig-util": "3.0.1",
+    "ethereumjs-util": "7.1.5",
+    "ethers": "5.7.2"
   },
   "devDependencies": {
     "@aave/deploy-v3": "1.56.2",
@@ -46,8 +75,6 @@
     "@types/node": "22.19.19",
     "bluebird": "^3.7.2",
     "dotenv": "16.6.1",
-    "eth-sig-util": "3.0.1",
-    "ethereumjs-util": "7.1.5",
     "hardhat": "2.26.3",
     "hardhat-contract-sizer": "2.10.1",
     "hardhat-dependency-compiler": "1.2.1",
