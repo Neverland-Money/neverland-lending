@@ -174,6 +174,13 @@ const checkExportTarget = (exportKey, field, target) => {
     }
     if (!fs.existsSync(resolveRoot(base))) {
       fail(`exports.${exportKey}.${field} base path does not exist: ${target}`);
+    } else {
+      const matchedFiles = listFiles(base).filter(
+        (packagePath) => packagePath.startsWith(base) && packagePath.endsWith(suffix)
+      );
+      if (!matchedFiles.length) {
+        fail(`exports.${exportKey}.${field} wildcard matches no files: ${target}`);
+      }
     }
     return;
   }
@@ -248,9 +255,9 @@ for (const [key, value] of Object.entries(packageJson.exports || {})) {
   }
 
   if (value && typeof value === 'object') {
-    if ('types' in value) checkExportTarget(key, 'types', value.types);
-    if ('require' in value) checkExportTarget(key, 'require', value.require);
-    if ('default' in value) checkExportTarget(key, 'default', value.default);
+    checkExportTarget(key, 'types', value.types);
+    checkExportTarget(key, 'require', value.require);
+    checkExportTarget(key, 'default', value.default);
   }
 }
 

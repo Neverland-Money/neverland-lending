@@ -53,7 +53,7 @@
     "ci:test": ". ./setup-test-env.sh  && npm run test",
     "ci:clean": "rm -rf ./artifacts ./cache ./types ./temp-artifacts",
     "prepare": "husky install",
-    "build": "tsc --project lib.tsconfig.json",
+    "build": "rm -rf ./dist && tsc --project lib.tsconfig.json",
     "verify:package": "node scripts/verify-package-release.js",
     "prepack": "npm run compile:clean && npm run build && npm run verify:package",
     "prepublishOnly": "npm run verify:package"
