@@ -623,10 +623,20 @@ makeSuite('Pool: Edge cases', (testEnv: TestEnv) => {
           continue;
         }
 
+        // Drop a reserve that actually satisfies validateDropReserve: no aToken supply, no
+        // debt, no accrued treasury. (The old all-rates-zero proxy broke once setReserveFactor
+        // began refreshing forward rates to the strategy base rate, per Aave's syncRatesState.)
+        const [aTokenSupply, variableDebtSupply, stableDebtSupply] = await Promise.all([
+          ERC20__factory.connect(assetData.aTokenAddress, deployer.signer).totalSupply(),
+          ERC20__factory.connect(assetData.variableDebtTokenAddress, deployer.signer).totalSupply(),
+          ERC20__factory.connect(assetData.stableDebtTokenAddress, deployer.signer).totalSupply(),
+        ]);
+
         if (
-          assetData.currentLiquidityRate.eq(0) &&
-          assetData.currentStableBorrowRate.eq(0) &&
-          assetData.currentVariableBorrowRate.eq(0)
+          aTokenSupply.eq(0) &&
+          variableDebtSupply.eq(0) &&
+          stableDebtSupply.eq(0) &&
+          assetData.accruedToTreasury.eq(0)
         ) {
           await mockPool.dropReserve(reserveAsset);
           break;
@@ -929,11 +939,14 @@ makeSuite('Pool: Edge cases', (testEnv: TestEnv) => {
     // Set the RF to 100%
     await configurator.setReserveFactor(dai.address, '10000');
 
+    // setReserveFactor already settled the pre-RF liquidity accrual at the OLD factor
+    // (Aave syncIndexesState/syncRatesState, audit #27), so reserveDataBefore captures it and the
+    // forward liquidity rate is now 0 under 100% RF.
     const reserveDataBefore = await pool.getReserveData(dai.address);
 
     await advanceTimeAndBlock(10000);
 
-    // Deposit to "settle" the liquidity index accrual from pre-RF increase to 100%
+    // A plain touch under 100% RF: variable borrow index + treasury accrue, liquidity index does not.
     await pool
       .connect(depositor.signer)
       .deposit(
@@ -947,7 +960,10 @@ makeSuite('Pool: Edge cases', (testEnv: TestEnv) => {
 
     expect(reserveDataAfter1.variableBorrowIndex).to.be.gt(reserveDataBefore.variableBorrowIndex);
     expect(reserveDataAfter1.accruedToTreasury).to.be.gt(reserveDataBefore.accruedToTreasury);
-    expect(reserveDataAfter1.liquidityIndex).to.be.gt(reserveDataBefore.liquidityIndex);
+    // Under 100% RF the supplier rate is 0, so the liquidity index stays flat (matches this test's
+    // title: "liquidity index not [accrue]"). Pre-fix this grew because the stale positive rate was
+    // applied across the whole post-RF window — exactly the #27 bug.
+    expect(reserveDataAfter1.liquidityIndex).to.be.eq(reserveDataBefore.liquidityIndex);
 
     await advanceTimeAndBlock(10000);
 
