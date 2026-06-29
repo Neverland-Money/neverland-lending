@@ -356,7 +356,7 @@ makeSuite('Interest Rate and Index Overflow', (testEnv) => {
     ).to.be.revertedWith(SAFECAST_UINT128_OVERFLOW);
   });
 
-  it('Flashloan rejects direct-transfer liquidity before `cumulateToLiquidityIndex` overflow', async () => {
+  it('Flashloan rejects a direct-transfer-inflated reserve with INVALID_AMOUNT', async () => {
     const {
       pool,
       users: [user],
