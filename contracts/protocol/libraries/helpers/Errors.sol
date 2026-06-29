@@ -97,4 +97,11 @@ library Errors {
   string public constant SILOED_BORROWING_VIOLATION = '89'; // 'User is trying to borrow multiple assets including a siloed one'
   string public constant RESERVE_DEBT_NOT_ZERO = '90'; // the total debt of the reserve needs to be 0
   string public constant FLASHLOAN_DISABLED = '91'; // FlashLoaning for this asset is disabled
+  // '92' INVALID_MAX_RATE: reserved by upstream Aave 3.1; not used in this v3.0.x-based build
+  string public constant WITHDRAW_TO_ATOKEN = '93'; // Withdrawing to the aToken is not allowed (Aave 3.1 verbatim)
+  string public constant SUPPLY_TO_ATOKEN = '94'; // Supplying to the aToken is not allowed (Aave 3.1 verbatim)
+  // '95'-'99' reserved by upstream Aave 3.1 (SLOPE_2_MUST_BE_GTE_SLOPE_1, CALLER_NOT_RISK_OR_POOL_OR_EMERGENCY_ADMIN,
+  // LIQUIDATION_GRACE_SENTINEL_CHECK_FAILED, INVALID_GRACE_PERIOD, INVALID_FREEZE_STATE); not used here.
+  // Neverland-specific codes start at '100' so they never collide with an upstream Aave code.
+  string public constant INSUFFICIENT_ALLOWANCE = '100'; // Requested amount exceeds the available allowance (Neverland explicit code)
 }
