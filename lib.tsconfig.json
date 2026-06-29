@@ -12,5 +12,5 @@
     "declarationDir": "dist/types",
     "typeRoots": ["./typechain/*.d.ts", "./node_modules/@types"]
   },
-  "include": ["helpers", "types", "hardhat.config.ts"]
+  "include": ["helpers", "types"]
 }

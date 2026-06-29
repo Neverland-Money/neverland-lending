@@ -2,7 +2,6 @@ import { ethers } from 'ethers';
 import { signTypedData_v4 } from 'eth-sig-util';
 import { fromRpcSig, ECDSASignature } from 'ethereumjs-util';
 import { tEthereumAddress, tStringTokenSmallUnits } from './types';
-import { getContract } from '@aave/deploy-v3';
 import { impersonateAccountsHardhat } from './misc-utils';
 import { HardhatRuntimeEnvironment } from 'hardhat/types';
 import { InitializableImmutableAdminUpgradeabilityProxy } from '../types';
@@ -13,7 +12,7 @@ const IERC20_DETAILED_ARTIFACT =
   'contracts/dependencies/openzeppelin/contracts/IERC20Detailed.sol:IERC20Detailed';
 
 export const convertToCurrencyDecimals = async (tokenAddress: tEthereumAddress, amount: string) => {
-  const token = await getContract(IERC20_DETAILED_ARTIFACT, tokenAddress);
+  const token = await hre.ethers.getContractAt('IERC20Detailed', tokenAddress);
   let decimals = (await token.decimals()).toString();
 
   return ethers.utils.parseUnits(amount, decimals);
