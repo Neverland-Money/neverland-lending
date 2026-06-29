@@ -161,6 +161,11 @@ export enum ProtocolErrors {
   SILOED_BORROWING_VIOLATION = '89', // user is trying to violate the siloed borrowing rule
   RESERVE_DEBT_NOT_ZERO = '90', // the total debt of the reserve needs to be 0
   FLASHLOAN_DISABLED = '91', // FlashLoaning for this asset is disabled
+  // '92' INVALID_MAX_RATE: reserved by upstream Aave 3.1; not used in this v3.0.x-based build
+  WITHDRAW_TO_ATOKEN = '93', // Withdrawing to the aToken is not allowed (Aave 3.1 verbatim)
+  SUPPLY_TO_ATOKEN = '94', // Supplying to the aToken is not allowed (Aave 3.1 verbatim)
+  // '95'-'99' reserved by upstream Aave 3.1; Neverland-specific codes start at '100'
+  INSUFFICIENT_ALLOWANCE = '100', // Requested amount exceeds the available allowance (Neverland explicit code)
   // SafeCast
   SAFECAST_UINT128_OVERFLOW = "SafeCast: value doesn't fit in 128 bits",
 
