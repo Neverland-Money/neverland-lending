@@ -107,8 +107,8 @@ library ReserveLogic {
   }
 
   /**
-   * @notice Accumulates a predefined amount of asset to the reserve as a fixed, instantaneous income. Used for example
-   * to accumulate the flashloan fee to the reserve, and spread it between all the suppliers.
+   * @notice Accumulates a predefined amount of asset to the reserve as a fixed, instantaneous income.
+   * @dev Flash-loan premiums no longer use this helper; they accrue through the treasury accumulator.
    * @param reserve The reserve object
    * @param totalLiquidity The total liquidity available in the reserve
    * @param amount The amount to accumulate
