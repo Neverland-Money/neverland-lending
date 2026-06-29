@@ -7,11 +7,9 @@ import {IAToken} from '../../../interfaces/IAToken.sol';
 import {Errors} from '../helpers/Errors.sol';
 import {UserConfiguration} from '../configuration/UserConfiguration.sol';
 import {DataTypes} from '../types/DataTypes.sol';
-import {WadRayMath} from '../math/WadRayMath.sol';
-import {PercentageMath} from '../math/PercentageMath.sol';
+import {TokenMath} from '../helpers/TokenMath.sol';
 import {ValidationLogic} from './ValidationLogic.sol';
 import {ReserveLogic} from './ReserveLogic.sol';
-import {ReserveConfiguration} from '../configuration/ReserveConfiguration.sol';
 
 /**
  * @title SupplyLogic library
@@ -23,9 +21,7 @@ library SupplyLogic {
   using ReserveLogic for DataTypes.ReserveData;
   using GPv2SafeERC20 for IERC20;
   using UserConfiguration for DataTypes.UserConfigurationMap;
-  using ReserveConfiguration for DataTypes.ReserveConfigurationMap;
-  using WadRayMath for uint256;
-  using PercentageMath for uint256;
+  using TokenMath for uint256;
 
   // See `IPool` for descriptions
   event ReserveUsedAsCollateralEnabled(address indexed reserve, address indexed user);
@@ -60,7 +56,7 @@ library SupplyLogic {
 
     reserve.updateState(reserveCache);
 
-    ValidationLogic.validateSupply(reserveCache, reserve, params.amount);
+    ValidationLogic.validateSupply(reserveCache, reserve, params.amount, params.onBehalfOf);
 
     reserve.updateInterestRates(reserveCache, params.asset, params.amount, 0);
 
@@ -113,11 +109,13 @@ library SupplyLogic {
     DataTypes.ReserveData storage reserve = reservesData[params.asset];
     DataTypes.ReserveCache memory reserveCache = reserve.cache();
 
+    require(params.to != reserveCache.aTokenAddress, Errors.INVALID_AMOUNT);
+
     reserve.updateState(reserveCache);
 
-    uint256 userBalance = IAToken(reserveCache.aTokenAddress).scaledBalanceOf(msg.sender).rayMul(
-      reserveCache.nextLiquidityIndex
-    );
+    uint256 userBalance = IAToken(reserveCache.aTokenAddress)
+      .scaledBalanceOf(msg.sender)
+      .getATokenBalance(reserveCache.nextLiquidityIndex);
 
     uint256 amountToWithdraw = params.amount;
 
@@ -131,9 +129,15 @@ library SupplyLogic {
 
     bool isCollateral = userConfig.isUsingAsCollateral(reserve.id);
 
-    if (isCollateral && amountToWithdraw == userBalance) {
-      userConfig.setUsingAsCollateral(reserve.id, false);
-      emit ReserveUsedAsCollateralDisabled(params.asset, msg.sender);
+    {
+      bool willDrainScaled = TokenMath.getATokenBurnScaledAmount(
+        amountToWithdraw,
+        reserveCache.nextLiquidityIndex
+      ) >= IAToken(reserveCache.aTokenAddress).scaledBalanceOf(msg.sender);
+      if (isCollateral && willDrainScaled) {
+        userConfig.setUsingAsCollateral(reserve.id, false);
+        emit ReserveUsedAsCollateralDisabled(params.asset, msg.sender);
+      }
     }
 
     IAToken(reserveCache.aTokenAddress).burn(
@@ -204,7 +208,7 @@ library SupplyLogic {
             params.fromEModeCategory
           );
         }
-        if (params.balanceFromBefore == params.amount) {
+        if (IAToken(reserve.aTokenAddress).scaledBalanceOf(params.from) == 0) {
           fromConfig.setUsingAsCollateral(reserveId, false);
           emit ReserveUsedAsCollateralDisabled(params.asset, params.from);
         }

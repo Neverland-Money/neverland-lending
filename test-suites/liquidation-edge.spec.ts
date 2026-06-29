@@ -1,7 +1,7 @@
 import { expect } from 'chai';
 import { BigNumber, utils } from 'ethers';
 import { MAX_UINT_AMOUNT } from '../helpers/constants';
-import { RateMode } from '../helpers/types';
+import { ProtocolErrors, RateMode } from '../helpers/types';
 import { makeSuite, TestEnv } from './helpers/make-suite';
 import { convertToCurrencyDecimals } from '../helpers/contracts-helpers';
 
@@ -16,6 +16,8 @@ import {
 } from '@aave/deploy-v3';
 
 makeSuite('Pool Liquidation: Edge cases', (testEnv: TestEnv) => {
+  const { STABLE_BORROWING_NOT_ENABLED } = ProtocolErrors;
+
   let snap: string;
 
   beforeEach(async () => {
@@ -36,7 +38,7 @@ makeSuite('Pool Liquidation: Edge cases', (testEnv: TestEnv) => {
     await waitForTx(await addressesProvider.setPriceOracle(aaveOracle.address));
   });
 
-  it('ValidationLogic `executeLiquidationCall` where user has variable and stable debt, but variable debt is insufficient to cover the full liquidation amount', async () => {
+  it('ValidationLogic `executeLiquidationCall` rejects stable debt setup and liquidates variable debt', async () => {
     const { pool, users, dai, weth, oracle } = testEnv;
 
     const depositor = users[0];
@@ -69,23 +71,25 @@ makeSuite('Pool Liquidation: Edge cases', (testEnv: TestEnv) => {
 
     await oracle.setAssetPrice(dai.address, daiPrice.percentDiv('2700'));
 
-    // Borrow
-    await pool
-      .connect(borrower.signer)
-      .borrow(
-        dai.address,
-        await convertToCurrencyDecimals(dai.address, '500'),
-        RateMode.Stable,
-        0,
-        borrower.address
-      );
+    // Stable borrow is disabled in Neverland.
+    await expect(
+      pool
+        .connect(borrower.signer)
+        .borrow(
+          dai.address,
+          await convertToCurrencyDecimals(dai.address, '500'),
+          RateMode.Stable,
+          0,
+          borrower.address
+        )
+    ).to.be.revertedWith(STABLE_BORROWING_NOT_ENABLED);
 
     // Borrow
     await pool
       .connect(borrower.signer)
       .borrow(
         dai.address,
-        await convertToCurrencyDecimals(dai.address, '220'),
+        await convertToCurrencyDecimals(dai.address, '720'),
         RateMode.Variable,
         0,
         borrower.address
@@ -154,16 +158,18 @@ makeSuite('Pool Liquidation: Edge cases', (testEnv: TestEnv) => {
         borrower.address
       );
 
-    // Borrow dai stable
-    await pool
-      .connect(borrower.signer)
-      .borrow(
-        dai.address,
-        await convertToCurrencyDecimals(dai.address, '100'),
-        RateMode.Stable,
-        0,
-        borrower.address
-      );
+    // Stable borrow is disabled in Neverland.
+    await expect(
+      pool
+        .connect(borrower.signer)
+        .borrow(
+          dai.address,
+          await convertToCurrencyDecimals(dai.address, '100'),
+          RateMode.Stable,
+          0,
+          borrower.address
+        )
+    ).to.be.revertedWith(STABLE_BORROWING_NOT_ENABLED);
 
     // Borrow dai variable
     await pool
@@ -191,7 +197,7 @@ makeSuite('Pool Liquidation: Edge cases', (testEnv: TestEnv) => {
     );
 
     expect(await variableDebtToken.balanceOf(borrower.address)).to.be.gt(0);
-    expect(await stableDebtToken.balanceOf(borrower.address)).to.be.gt(0);
+    expect(await stableDebtToken.balanceOf(borrower.address)).to.be.eq(0);
 
     const userConfigBefore = BigNumber.from(
       (await pool.getUserConfiguration(borrower.address)).data
@@ -276,16 +282,18 @@ makeSuite('Pool Liquidation: Edge cases', (testEnv: TestEnv) => {
         borrower.address
       );
 
-    // Borrow dai stable
-    await pool
-      .connect(borrower.signer)
-      .borrow(
-        dai.address,
-        await convertToCurrencyDecimals(dai.address, '100'),
-        RateMode.Stable,
-        0,
-        borrower.address
-      );
+    // Stable borrow is disabled in Neverland.
+    await expect(
+      pool
+        .connect(borrower.signer)
+        .borrow(
+          dai.address,
+          await convertToCurrencyDecimals(dai.address, '100'),
+          RateMode.Stable,
+          0,
+          borrower.address
+        )
+    ).to.be.revertedWith(STABLE_BORROWING_NOT_ENABLED);
 
     // Borrow dai variable
     await pool
@@ -298,13 +306,13 @@ makeSuite('Pool Liquidation: Edge cases', (testEnv: TestEnv) => {
         borrower.address
       );
 
-    // HF = (0.9 * 0.85) / (1000 * 0.0005 + 100 * 0.0005 + 100 * 0.0005) = 1.275
+    // HF = (0.9 * 0.85) / (1000 * 0.0005 + 100 * 0.0005) = 1.39
 
     // Increase usdc price to allow liquidation
     const usdcPrice = await oracle.getAssetPrice(usdc.address);
     await oracle.setAssetPrice(usdc.address, usdcPrice.mul(10));
 
-    // HF = (0.9 * 0.85) / (1000 * 0.005 + 100 * 0.0005 + 100 * 0.0005) = 0.15
+    // HF = (0.9 * 0.85) / (1000 * 0.005 + 100 * 0.0005) = 0.15
     //
     // close factor = 1
     // $WETH_collateral = 0.9

@@ -10,13 +10,18 @@ import {
 } from '@aave/deploy-v3';
 import { parseUnits } from '@ethersproject/units';
 import { expect } from 'chai';
-import { utils } from 'ethers';
-import { MAX_UINT_AMOUNT } from '../helpers/constants';
+import { BigNumber, utils } from 'ethers';
+import { MAX_UINT_AMOUNT, RAY } from '../helpers/constants';
 import { setBlocktime, timeLatest } from '../helpers/misc-utils';
 import { RateMode } from '../helpers/types';
 import { TestEnv, makeSuite } from './helpers/make-suite';
 import './helpers/utils/wadraymath';
 import { AaveDistributionManager__factory } from '@aave/deploy-v3/dist/types/typechain/factories/@aave/safety-module/contracts/stake';
+
+const rayMulCeil = (a: BigNumber, b: BigNumber) => {
+  if (a.isZero() || b.isZero()) return BigNumber.from(0);
+  return a.mul(b).add(BigNumber.from(RAY).sub(1)).div(RAY);
+};
 
 makeSuite('AToken: Repay', (testEnv: TestEnv) => {
   let snapShot: string;
@@ -259,7 +264,8 @@ makeSuite('AToken: Repay', (testEnv: TestEnv) => {
       user.signer
     );
     const scaledTotalSupply = await variableDebtToken.scaledTotalSupply();
-    const variableDebt = scaledTotalSupply.rayMul(
+    const variableDebt = rayMulCeil(
+      scaledTotalSupply,
       await pool.getReserveNormalizedVariableDebt(dai.address)
     );
 

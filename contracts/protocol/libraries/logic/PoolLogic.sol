@@ -8,6 +8,7 @@ import {IAToken} from '../../../interfaces/IAToken.sol';
 import {ReserveConfiguration} from '../configuration/ReserveConfiguration.sol';
 import {Errors} from '../helpers/Errors.sol';
 import {WadRayMath} from '../math/WadRayMath.sol';
+import {TokenMath} from '../helpers/TokenMath.sol';
 import {DataTypes} from '../types/DataTypes.sol';
 import {ReserveLogic} from './ReserveLogic.sol';
 import {ValidationLogic} from './ValidationLogic.sol';
@@ -21,6 +22,7 @@ import {GenericLogic} from './GenericLogic.sol';
 library PoolLogic {
   using GPv2SafeERC20 for IERC20;
   using WadRayMath for uint256;
+  using TokenMath for uint256;
   using ReserveLogic for DataTypes.ReserveData;
   using ReserveConfiguration for DataTypes.ReserveConfigurationMap;
 
@@ -98,12 +100,13 @@ library PoolLogic {
       uint256 accruedToTreasury = reserve.accruedToTreasury;
 
       if (accruedToTreasury != 0) {
-        reserve.accruedToTreasury = 0;
         uint256 normalizedIncome = reserve.getNormalizedIncome();
-        uint256 amountToMint = accruedToTreasury.rayMul(normalizedIncome);
+        uint256 amountToMint = accruedToTreasury.rayMulCeil(normalizedIncome);
+        uint256 amountActuallyMinted = accruedToTreasury.getATokenBalance(normalizedIncome);
+        reserve.accruedToTreasury = 0;
         IAToken(reserve.aTokenAddress).mintToTreasury(amountToMint, normalizedIncome);
 
-        emit MintedToTreasury(assetAddress, amountToMint);
+        emit MintedToTreasury(assetAddress, amountActuallyMinted);
       }
     }
   }

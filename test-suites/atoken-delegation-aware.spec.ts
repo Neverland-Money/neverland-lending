@@ -1,30 +1,31 @@
-import { DelegationAwareAToken, MintableDelegationERC20 } from '../types';
 import { expect } from 'chai';
+import { ethers } from 'hardhat';
 import { ZERO_ADDRESS } from '../helpers/constants';
 import { ProtocolErrors } from '../helpers/types';
 import { makeSuite, TestEnv } from './helpers/make-suite';
-import {
-  deployMintableDelegationERC20,
-  deployDelegationAwareAToken,
-} from '@aave/deploy-v3/dist/helpers/contract-deployments';
 
 makeSuite('AToken: DelegationAwareAToken', (testEnv: TestEnv) => {
-  let delegationAToken = <DelegationAwareAToken>{};
-  let delegationERC20 = <MintableDelegationERC20>{};
+  let delegationAToken: any = {};
+  let delegationERC20: any = {};
 
   it('Deploys a new MintableDelegationERC20 and a DelegationAwareAToken', async () => {
     const { pool } = testEnv;
 
-    delegationERC20 = await deployMintableDelegationERC20(['DEL', 'DEL', '18']);
+    const delegationERC20Factory = await ethers.getContractFactory('MintableDelegationERC20');
+    delegationERC20 = await delegationERC20Factory.deploy('DEL', 'DEL', '18');
 
-    delegationAToken = await deployDelegationAwareAToken([
+    const delegationATokenFactory = await ethers.getContractFactory('DelegationAwareAToken');
+    delegationAToken = await delegationATokenFactory.deploy(pool.address);
+    await delegationAToken.initialize(
       pool.address,
+      ZERO_ADDRESS,
       delegationERC20.address,
       ZERO_ADDRESS,
-      ZERO_ADDRESS,
+      '18',
       'aDEL',
       'aDEL',
-    ]);
+      '0x10'
+    );
   });
 
   it('Tries to delegate with the caller not being the Aave admin (revert expected)', async () => {

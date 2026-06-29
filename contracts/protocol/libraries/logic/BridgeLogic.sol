@@ -14,6 +14,11 @@ import {Errors} from '../helpers/Errors.sol';
 import {ValidationLogic} from './ValidationLogic.sol';
 import {ReserveLogic} from './ReserveLogic.sol';
 
+/**
+ * @dev Neverland's canonical Pool does not import or link this library.
+ *      The portal entrypoints hard-revert in Pool, so this file is retained
+ *      only to preserve the upstream package/source surface.
+ */
 library BridgeLogic {
   using ReserveLogic for DataTypes.ReserveCache;
   using ReserveLogic for DataTypes.ReserveData;
@@ -63,7 +68,7 @@ library BridgeLogic {
 
     reserve.updateState(reserveCache);
 
-    ValidationLogic.validateSupply(reserveCache, reserve, amount);
+    ValidationLogic.validateSupply(reserveCache, reserve, amount, onBehalfOf);
 
     uint256 unbackedMintCap = reserveCache.reserveConfiguration.getUnbackedMintCap();
     uint256 reserveDecimals = reserveCache.reserveConfiguration.getDecimals();

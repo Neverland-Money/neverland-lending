@@ -23,16 +23,6 @@ import {
   Faucet,
   getFaucet,
 } from '@aave/deploy-v3';
-import { Pool } from '../../types/Pool';
-import { AaveProtocolDataProvider } from '../../types/AaveProtocolDataProvider';
-import { MintableERC20 } from '../../types/MintableERC20';
-import { AToken } from '../../types/AToken';
-import { PoolConfigurator } from '../../types/PoolConfigurator';
-import { PriceOracle } from '../../types/PriceOracle';
-import { PoolAddressesProvider } from '../../types/PoolAddressesProvider';
-import { PoolAddressesProviderRegistry } from '../../types/PoolAddressesProviderRegistry';
-import { WETH9Mocked } from '../../types/WETH9Mocked';
-import { AaveOracle, ACLManager, StableDebtToken, VariableDebtToken } from '../../types';
 import { HardhatRuntimeEnvironment } from 'hardhat/types';
 import { usingTenderly } from '../../helpers/tenderly-utils';
 import { tEthereumAddress } from '../../helpers/types';
@@ -49,25 +39,25 @@ export interface TestEnv {
   emergencyAdmin: SignerWithAddress;
   riskAdmin: SignerWithAddress;
   users: SignerWithAddress[];
-  pool: Pool;
-  configurator: PoolConfigurator;
-  oracle: PriceOracle;
-  aaveOracle: AaveOracle;
-  helpersContract: AaveProtocolDataProvider;
-  weth: WETH9Mocked;
-  aWETH: AToken;
+  pool: any;
+  configurator: any;
+  oracle: any;
+  aaveOracle: any;
+  helpersContract: any;
+  weth: any;
+  aWETH: any;
   faucetMintable: Faucet;
-  dai: MintableERC20;
-  aDai: AToken;
-  aAave: AToken;
-  variableDebtDai: VariableDebtToken;
-  stableDebtDai: StableDebtToken;
-  aUsdc: AToken;
-  usdc: MintableERC20;
-  aave: MintableERC20;
-  addressesProvider: PoolAddressesProvider;
-  registry: PoolAddressesProviderRegistry;
-  aclManager: ACLManager;
+  dai: any;
+  aDai: any;
+  aAave: any;
+  variableDebtDai: any;
+  stableDebtDai: any;
+  aUsdc: any;
+  usdc: any;
+  aave: any;
+  addressesProvider: any;
+  registry: any;
+  aclManager: any;
 }
 
 let HardhatSnapshotId: string = '0x1';
@@ -81,24 +71,24 @@ const testEnv: TestEnv = {
   emergencyAdmin: {} as SignerWithAddress,
   riskAdmin: {} as SignerWithAddress,
   users: [] as SignerWithAddress[],
-  pool: {} as Pool,
-  configurator: {} as PoolConfigurator,
-  helpersContract: {} as AaveProtocolDataProvider,
-  oracle: {} as PriceOracle,
-  aaveOracle: {} as AaveOracle,
-  weth: {} as WETH9Mocked,
-  aWETH: {} as AToken,
+  pool: {},
+  configurator: {},
+  helpersContract: {},
+  oracle: {},
+  aaveOracle: {},
+  weth: {},
+  aWETH: {},
   faucetMintable: {} as Faucet,
-  dai: {} as MintableERC20,
-  aDai: {} as AToken,
-  variableDebtDai: {} as VariableDebtToken,
-  stableDebtDai: {} as StableDebtToken,
-  aUsdc: {} as AToken,
-  usdc: {} as MintableERC20,
-  aave: {} as MintableERC20,
-  addressesProvider: {} as PoolAddressesProvider,
-  registry: {} as PoolAddressesProviderRegistry,
-  aclManager: {} as ACLManager,
+  dai: {},
+  aDai: {},
+  variableDebtDai: {},
+  stableDebtDai: {},
+  aUsdc: {},
+  usdc: {},
+  aave: {},
+  addressesProvider: {},
+  registry: {},
+  aclManager: {},
 } as TestEnv;
 
 export async function initializeMakeSuite() {

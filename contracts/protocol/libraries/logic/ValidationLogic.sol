@@ -2,10 +2,7 @@
 pragma solidity ^0.8.10;
 
 import {IERC20} from '../../../dependencies/openzeppelin/contracts/IERC20.sol';
-import {Address} from '../../../dependencies/openzeppelin/contracts/Address.sol';
-import {GPv2SafeERC20} from '../../../dependencies/gnosis/contracts/GPv2SafeERC20.sol';
 import {IReserveInterestRateStrategy} from '../../../interfaces/IReserveInterestRateStrategy.sol';
-import {IStableDebtToken} from '../../../interfaces/IStableDebtToken.sol';
 import {IScaledBalanceToken} from '../../../interfaces/IScaledBalanceToken.sol';
 import {IPriceOracleGetter} from '../../../interfaces/IPriceOracleGetter.sol';
 import {IAToken} from '../../../interfaces/IAToken.sol';
@@ -15,10 +12,9 @@ import {IAccessControl} from '../../../dependencies/openzeppelin/contracts/IAcce
 import {ReserveConfiguration} from '../configuration/ReserveConfiguration.sol';
 import {UserConfiguration} from '../configuration/UserConfiguration.sol';
 import {Errors} from '../helpers/Errors.sol';
-import {WadRayMath} from '../math/WadRayMath.sol';
 import {PercentageMath} from '../math/PercentageMath.sol';
+import {TokenMath} from '../helpers/TokenMath.sol';
 import {DataTypes} from '../types/DataTypes.sol';
-import {ReserveLogic} from './ReserveLogic.sol';
 import {GenericLogic} from './GenericLogic.sol';
 import {SafeCast} from '../../../dependencies/openzeppelin/contracts/SafeCast.sol';
 import {IncentivizedERC20} from '../../tokenization/base/IncentivizedERC20.sol';
@@ -29,14 +25,11 @@ import {IncentivizedERC20} from '../../tokenization/base/IncentivizedERC20.sol';
  * @notice Implements functions to validate the different actions of the protocol
  */
 library ValidationLogic {
-  using ReserveLogic for DataTypes.ReserveData;
-  using WadRayMath for uint256;
   using PercentageMath for uint256;
+  using TokenMath for uint256;
   using SafeCast for uint256;
-  using GPv2SafeERC20 for IERC20;
   using ReserveConfiguration for DataTypes.ReserveConfigurationMap;
   using UserConfiguration for DataTypes.UserConfigurationMap;
-  using Address for address;
 
   // Factor to apply to "only-variable-debt" liquidity rate to get threshold for rebalancing, expressed in bps
   // A value of 0.9e4 results in 90%
@@ -66,9 +59,12 @@ library ValidationLogic {
   function validateSupply(
     DataTypes.ReserveCache memory reserveCache,
     DataTypes.ReserveData storage reserve,
-    uint256 amount
+    uint256 amount,
+    address onBehalfOf
   ) internal view {
     require(amount != 0, Errors.INVALID_AMOUNT);
+    uint256 amountScaled = amount.getATokenMintScaledAmount(reserveCache.nextLiquidityIndex);
+    require(amountScaled != 0, Errors.INVALID_AMOUNT);
 
     (bool isActive, bool isFrozen, , , bool isPaused) = reserveCache
       .reserveConfiguration
@@ -76,12 +72,16 @@ library ValidationLogic {
     require(isActive, Errors.RESERVE_INACTIVE);
     require(!isPaused, Errors.RESERVE_PAUSED);
     require(!isFrozen, Errors.RESERVE_FROZEN);
+    require(onBehalfOf != reserveCache.aTokenAddress, Errors.INVALID_AMOUNT);
 
     uint256 supplyCap = reserveCache.reserveConfiguration.getSupplyCap();
     require(
       supplyCap == 0 ||
-        ((IAToken(reserveCache.aTokenAddress).scaledTotalSupply() +
-          uint256(reserve.accruedToTreasury)).rayMul(reserveCache.nextLiquidityIndex) + amount) <=
+        (
+          (IAToken(reserveCache.aTokenAddress).scaledTotalSupply() +
+            uint256(reserve.accruedToTreasury) +
+            amountScaled).getATokenBalance(reserveCache.nextLiquidityIndex)
+        ) <=
         supplyCap * (10 ** reserveCache.reserveConfiguration.getDecimals()),
       Errors.SUPPLY_CAP_EXCEEDED
     );
@@ -119,6 +119,11 @@ library ValidationLogic {
     uint256 borrowCap;
     uint256 amountInBaseCurrency;
     uint256 assetUnit;
+    uint256 amountScaled;
+    uint256 amountToValidateLiquidity;
+    uint256 actualBorrowAmount;
+    uint256 userVariableDebtBefore;
+    uint256 userVariableDebtAfter;
     address eModePriceSource;
     address siloedBorrowingAddress;
     bool isActive;
@@ -178,15 +183,43 @@ library ValidationLogic {
       vars.assetUnit = 10 ** vars.reserveDecimals;
     }
 
-    if (vars.borrowCap != 0) {
-      vars.totalSupplyVariableDebt = params.reserveCache.currScaledVariableDebt.rayMul(
+    vars.amountToValidateLiquidity = params.amount;
+    vars.actualBorrowAmount = params.amount;
+    vars.totalSupplyVariableDebt = params.reserveCache.currScaledVariableDebt.getVTokenBalance(
+      params.reserveCache.nextVariableBorrowIndex
+    );
+
+    if (params.interestRateMode == DataTypes.InterestRateMode.VARIABLE) {
+      vars.amountScaled = params.amount.getVTokenMintScaledAmount(
         params.reserveCache.nextVariableBorrowIndex
       );
+      vars.amountToValidateLiquidity = vars.amountScaled.getVTokenBalance(
+        params.reserveCache.nextVariableBorrowIndex
+      );
+      uint256 userScaledVariableDebt = IScaledBalanceToken(
+        params.reserveCache.variableDebtTokenAddress
+      ).scaledBalanceOf(params.userAddress);
+      vars.userVariableDebtBefore = userScaledVariableDebt.getVTokenBalance(
+        params.reserveCache.nextVariableBorrowIndex
+      );
+      vars.userVariableDebtAfter = (userScaledVariableDebt + vars.amountScaled).getVTokenBalance(
+        params.reserveCache.nextVariableBorrowIndex
+      );
+      vars.actualBorrowAmount = vars.userVariableDebtAfter - vars.userVariableDebtBefore;
+      vars.totalSupplyVariableDebt = (params.reserveCache.currScaledVariableDebt +
+        vars.amountScaled).getVTokenBalance(params.reserveCache.nextVariableBorrowIndex);
+    }
 
-      vars.totalDebt =
-        params.reserveCache.currTotalStableDebt +
-        vars.totalSupplyVariableDebt +
-        params.amount;
+    require(
+      IERC20(params.reserveCache.aTokenAddress).totalSupply() >= vars.amountToValidateLiquidity,
+      Errors.INVALID_AMOUNT
+    );
+
+    if (vars.borrowCap != 0) {
+      vars.totalDebt = params.reserveCache.currTotalStableDebt + vars.totalSupplyVariableDebt;
+      if (params.interestRateMode == DataTypes.InterestRateMode.STABLE) {
+        vars.totalDebt += params.amount;
+      }
 
       unchecked {
         require(vars.totalDebt <= vars.borrowCap * vars.assetUnit, Errors.BORROW_CAP_EXCEEDED);
@@ -203,7 +236,7 @@ library ValidationLogic {
 
       require(
         reservesData[params.isolationModeCollateralAddress].isolationModeTotalDebt +
-          (params.amount /
+          (vars.actualBorrowAmount /
             10 ** (vars.reserveDecimals - ReserveConfiguration.DEBT_CEILING_DECIMALS))
             .toUint128() <=
           params.isolationModeDebtCeiling,
@@ -247,18 +280,30 @@ library ValidationLogic {
       Errors.HEALTH_FACTOR_LOWER_THAN_LIQUIDATION_THRESHOLD
     );
 
-    vars.amountInBaseCurrency =
-      IPriceOracleGetter(params.oracle).getAssetPrice(
+    {
+      uint256 assetPrice = IPriceOracleGetter(params.oracle).getAssetPrice(
         vars.eModePriceSource != address(0) ? vars.eModePriceSource : params.asset
-      ) *
-      params.amount;
-    unchecked {
-      vars.amountInBaseCurrency /= vars.assetUnit;
+      );
+
+      if (params.interestRateMode == DataTypes.InterestRateMode.VARIABLE) {
+        uint256 stableDebt = IERC20(params.reserveCache.stableDebtTokenAddress).balanceOf(
+          params.userAddress
+        );
+        vars.amountInBaseCurrency =
+          _ceilMulDiv(assetPrice, vars.userVariableDebtAfter + stableDebt, vars.assetUnit) -
+          _ceilMulDiv(assetPrice, vars.userVariableDebtBefore + stableDebt, vars.assetUnit);
+      } else {
+        vars.amountInBaseCurrency = _ceilMulDiv(
+          assetPrice,
+          vars.actualBorrowAmount,
+          vars.assetUnit
+        );
+      }
     }
 
     //add the current already borrowed amount to the amount requested to calculate the total collateral needed.
     vars.collateralNeededInBaseCurrency = (vars.userDebtInBaseCurrency + vars.amountInBaseCurrency)
-      .percentDiv(vars.currentLtv); //LTV is calculated in percentage
+      .percentDivCeil(vars.currentLtv); //LTV is calculated in percentage
 
     require(
       vars.collateralNeededInBaseCurrency <= vars.userCollateralInBaseCurrency,
@@ -308,6 +353,15 @@ library ValidationLogic {
         );
       }
     }
+  }
+
+  function _ceilMulDiv(uint256 a, uint256 b, uint256 denominator) private pure returns (uint256) {
+    if (a == 0 || b == 0) {
+      return 0;
+    }
+    uint256 product = a * b;
+    uint256 quotient = product / denominator;
+    return product % denominator == 0 ? quotient : quotient + 1;
   }
 
   /**
@@ -464,7 +518,10 @@ library ValidationLogic {
   ) internal view {
     require(assets.length == amounts.length, Errors.INCONSISTENT_FLASHLOAN_PARAMS);
     for (uint256 i = 0; i < assets.length; i++) {
-      validateFlashloanSimple(reservesData[assets[i]]);
+      for (uint256 j = i + 1; j < assets.length; j++) {
+        require(assets[i] != assets[j], Errors.INCONSISTENT_FLASHLOAN_PARAMS);
+      }
+      validateFlashloanSimple(reservesData[assets[i]], amounts[i]);
     }
   }
 
@@ -472,11 +529,15 @@ library ValidationLogic {
    * @notice Validates a flashloan action.
    * @param reserve The state of the reserve
    */
-  function validateFlashloanSimple(DataTypes.ReserveData storage reserve) internal view {
+  function validateFlashloanSimple(
+    DataTypes.ReserveData storage reserve,
+    uint256 amount
+  ) internal view {
     DataTypes.ReserveConfigurationMap memory configuration = reserve.configuration;
     require(!configuration.getPaused(), Errors.RESERVE_PAUSED);
     require(configuration.getActive(), Errors.RESERVE_INACTIVE);
     require(configuration.getFlashLoanEnabled(), Errors.FLASHLOAN_DISABLED);
+    require(IERC20(reserve.aTokenAddress).totalSupply() >= amount, Errors.INVALID_AMOUNT);
   }
 
   struct ValidateLiquidationCallLocalVars {
@@ -484,7 +545,6 @@ library ValidationLogic {
     bool collateralReservePaused;
     bool principalReserveActive;
     bool principalReservePaused;
-    bool isCollateralEnabled;
   }
 
   /**
@@ -496,9 +556,13 @@ library ValidationLogic {
   function validateLiquidationCall(
     DataTypes.UserConfigurationMap storage userConfig,
     DataTypes.ReserveData storage collateralReserve,
+    address borrower,
+    address liquidator,
     DataTypes.ValidateLiquidationCallParams memory params
   ) internal view {
     ValidateLiquidationCallLocalVars memory vars;
+
+    require(borrower != liquidator, Errors.COLLATERAL_CANNOT_BE_LIQUIDATED);
 
     (vars.collateralReserveActive, , , , vars.collateralReservePaused) = collateralReserve
       .configuration
@@ -524,12 +588,11 @@ library ValidationLogic {
       Errors.HEALTH_FACTOR_NOT_BELOW_THRESHOLD
     );
 
-    vars.isCollateralEnabled =
-      collateralReserve.configuration.getLiquidationThreshold() != 0 &&
-      userConfig.isUsingAsCollateral(collateralReserve.id);
-
     //if collateral isn't enabled as collateral by user, it cannot be liquidated
-    require(vars.isCollateralEnabled, Errors.COLLATERAL_CANNOT_BE_LIQUIDATED);
+    require(
+      userConfig.isUsingAsCollateral(collateralReserve.id),
+      Errors.COLLATERAL_CANNOT_BE_LIQUIDATED
+    );
     require(params.totalDebt != 0, Errors.SPECIFIED_CURRENCY_NOT_BORROWED_BY_USER);
   }
 

@@ -9,10 +9,9 @@ import {IPriceOracleGetter} from '../../../interfaces/IPriceOracleGetter.sol';
  * @title PriceEmitter
  * @author Neverland
  * @notice Emits best-effort oracle price observations for token accounting actions.
- * @dev The Pool and addresses provider are trusted protocol dependencies. After the
- *      oracle address is resolved, oracle reads use try/catch so read failures do not
- *      block the token action. Logs are reverted if the guarded action reverts. `ok`
- *      only reports whether `getAssetPrice(asset)` succeeded.
+ * @dev Oracle resolution and reads use try/catch so observation failures do not
+ *      block the token action. Logs are reverted if the guarded action reverts.
+ *      `ok` only reports whether `getAssetPrice(asset)` succeeded.
  */
 abstract contract PriceEmitter {
   /// @dev Unified action codes across Neverland price emitters.
@@ -72,22 +71,39 @@ abstract contract PriceEmitter {
    * @param user The account associated with the operation.
    */
   function _emitAssetPrice(IPool pool, address asset, uint8 action, address user) internal {
-    address oracleAddr = IPoolAddressesProvider(pool.ADDRESSES_PROVIDER()).getPriceOracle();
+    IPoolAddressesProvider provider;
+    try pool.ADDRESSES_PROVIDER() returns (IPoolAddressesProvider resolvedProvider) {
+      if (address(resolvedProvider) == address(0)) {
+        return;
+      }
+      provider = resolvedProvider;
+    } catch {
+      return;
+    }
+
+    address oracleAddr;
+    try provider.getPriceOracle() returns (address resolvedOracle) {
+      if (resolvedOracle == address(0)) {
+        return;
+      }
+      oracleAddr = resolvedOracle;
+    } catch {
+      return;
+    }
+
     uint256 baseUnit = 0;
     uint256 price = 0;
     bool ok = false;
-    if (oracleAddr != address(0)) {
-      IPriceOracleGetter oracle = IPriceOracleGetter(oracleAddr);
+    IPriceOracleGetter oracle = IPriceOracleGetter(oracleAddr);
 
-      try oracle.BASE_CURRENCY_UNIT() returns (uint256 unit) {
-        baseUnit = unit;
-      } catch {}
+    try oracle.BASE_CURRENCY_UNIT() returns (uint256 unit) {
+      baseUnit = unit;
+    } catch {}
 
-      try oracle.getAssetPrice(asset) returns (uint256 p) {
-        price = p;
-        ok = true;
-      } catch {}
-    }
+    try oracle.getAssetPrice(asset) returns (uint256 p) {
+      price = p;
+      ok = true;
+    } catch {}
 
     emit PriceObserved(asset, price, baseUnit, oracleAddr, action, ok, user, block.timestamp);
   }

@@ -172,7 +172,7 @@ makeSuite('PoolConfigurator', (testEnv: TestEnv) => {
         underlyingAssetDecimals: 18,
         interestRateStrategyAddress: mockRateStrategy.address,
         underlyingAsset: mockToken.address,
-        treasury: ZERO_ADDRESS,
+        treasury: poolAdmin.address,
         incentivesController: ZERO_ADDRESS,
         aTokenName: 'AMOCK',
         aTokenSymbol: 'AMOCK',

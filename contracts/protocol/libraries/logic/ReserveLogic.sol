@@ -1,8 +1,6 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.10;
 
-import {IERC20} from '../../../dependencies/openzeppelin/contracts/IERC20.sol';
-import {GPv2SafeERC20} from '../../../dependencies/gnosis/contracts/GPv2SafeERC20.sol';
 import {IStableDebtToken} from '../../../interfaces/IStableDebtToken.sol';
 import {IVariableDebtToken} from '../../../interfaces/IVariableDebtToken.sol';
 import {IReserveInterestRateStrategy} from '../../../interfaces/IReserveInterestRateStrategy.sol';
@@ -10,6 +8,7 @@ import {ReserveConfiguration} from '../configuration/ReserveConfiguration.sol';
 import {MathUtils} from '../math/MathUtils.sol';
 import {WadRayMath} from '../math/WadRayMath.sol';
 import {PercentageMath} from '../math/PercentageMath.sol';
+import {TokenMath} from '../helpers/TokenMath.sol';
 import {Errors} from '../helpers/Errors.sol';
 import {DataTypes} from '../types/DataTypes.sol';
 import {SafeCast} from '../../../dependencies/openzeppelin/contracts/SafeCast.sol';
@@ -21,9 +20,9 @@ import {SafeCast} from '../../../dependencies/openzeppelin/contracts/SafeCast.so
  */
 library ReserveLogic {
   using WadRayMath for uint256;
+  using TokenMath for uint256;
   using PercentageMath for uint256;
   using SafeCast for uint256;
-  using GPv2SafeERC20 for IERC20;
   using ReserveLogic for DataTypes.ReserveData;
   using ReserveConfiguration for DataTypes.ReserveConfigurationMap;
 
@@ -122,9 +121,8 @@ library ReserveLogic {
   ) internal returns (uint256) {
     //next liquidity index is calculated this way: `((amount / totalLiquidity) + 1) * liquidityIndex`
     //division `amount / totalLiquidity` done in ray for precision
-    uint256 result = (amount.wadToRay().rayDiv(totalLiquidity.wadToRay()) + WadRayMath.RAY).rayMul(
-      reserve.liquidityIndex
-    );
+    uint256 result = (amount.wadToRay().rayDivFloor(totalLiquidity.wadToRay()) + WadRayMath.RAY)
+      .rayMulFloor(reserve.liquidityIndex);
     reserve.liquidityIndex = result.toUint128();
     return result;
   }
@@ -178,7 +176,7 @@ library ReserveLogic {
   ) internal {
     UpdateInterestRatesLocalVars memory vars;
 
-    vars.totalVariableDebt = reserveCache.nextScaledVariableDebt.rayMul(
+    vars.totalVariableDebt = reserveCache.nextScaledVariableDebt.getVTokenBalance(
       reserveCache.nextVariableBorrowIndex
     );
 
@@ -239,14 +237,8 @@ library ReserveLogic {
       return;
     }
 
-    //calculate the total variable debt at moment of the last interaction
-    vars.prevTotalVariableDebt = reserveCache.currScaledVariableDebt.rayMul(
-      reserveCache.currVariableBorrowIndex
-    );
-
-    //calculate the new total variable debt after accumulation of the interest on the index
-    vars.currTotalVariableDebt = reserveCache.currScaledVariableDebt.rayMul(
-      reserveCache.nextVariableBorrowIndex
+    uint256 variableDebtAccrued = reserveCache.currScaledVariableDebt.rayMulFloor(
+      reserveCache.nextVariableBorrowIndex - reserveCache.currVariableBorrowIndex
     );
 
     //calculate the stable debt until the last timestamp update
@@ -260,11 +252,9 @@ library ReserveLogic {
       vars.cumulatedStableInterest
     );
 
-    //debt accrued is the sum of the current debt minus the sum of the debt at the last update
     vars.totalDebtAccrued =
-      vars.currTotalVariableDebt +
+      variableDebtAccrued +
       reserveCache.currTotalStableDebt -
-      vars.prevTotalVariableDebt -
       vars.prevTotalStableDebt;
 
     vars.amountToMint = vars.totalDebtAccrued.percentMul(reserveCache.reserveFactor);
@@ -272,7 +262,7 @@ library ReserveLogic {
     if (vars.amountToMint != 0) {
       reserve.accruedToTreasury += vars
         .amountToMint
-        .rayDiv(reserveCache.nextLiquidityIndex)
+        .rayDivFloor(reserveCache.nextLiquidityIndex)
         .toUint128();
     }
   }

@@ -1,9 +1,9 @@
 {
-  "title": "Pool: Swap rate mode",
-  "description": "Test cases for the swapBorrowRateMode() function.",
+  "title": "Pool: Swap rate mode disabled",
+  "description": "Borrow-rate mode switching is runtime-disabled in Neverland.",
   "stories": [
     {
-      "description": "User 0 tries to swap rate mode without any variable rate loan in progress (revert expected)",
+      "description": "Swap rate mode reverts without an open position",
       "actions": [
         {
           "name": "swapBorrowRateMode",
@@ -13,13 +13,8 @@
             "borrowRateMode": "variable"
           },
           "expected": "revert",
-          "revertMessage": "User does not have a variable rate loan in progress on this reserve"
-        }
-      ]
-    },
-    {
-      "description": "User 0 tries to swap rate mode without any stable rate loan in progress (revert expected)",
-      "actions": [
+          "revertMessage": "31"
+        },
         {
           "name": "swapBorrowRateMode",
           "args": {
@@ -28,12 +23,12 @@
             "borrowRateMode": "stable"
           },
           "expected": "revert",
-          "revertMessage": "User does not have a stable rate loan in progress on this reserve"
+          "revertMessage": "31"
         }
       ]
     },
     {
-      "description": "User 0 deposits 1000 DAI, user 1 deposits 2 WETH as collateral, borrows 100 DAI at variable rate and swaps to stable after one year",
+      "description": "Variable debt setup remains usable but swap rate mode stays disabled",
       "actions": [
         {
           "name": "mint",
@@ -105,23 +100,8 @@
             "user": "1",
             "borrowRateMode": "variable"
           },
-          "expected": "success"
-        }
-      ]
-    },
-    {
-      "description": "User 1 borrows another 100 DAI, and swaps back to variable after one year, repays the loan",
-      "actions": [
-        {
-          "name": "borrow",
-          "args": {
-            "reserve": "DAI",
-            "amount": "100",
-            "borrowRateMode": "stable",
-            "user": "1",
-            "timeTravel": "365"
-          },
-          "expected": "success"
+          "expected": "revert",
+          "revertMessage": "31"
         },
         {
           "name": "swapBorrowRateMode",
@@ -130,36 +110,8 @@
             "user": "1",
             "borrowRateMode": "stable"
           },
-          "expected": "success"
-        },
-        {
-          "name": "mint",
-          "description": "Mint 50 DAI to cover the interest",
-          "args": {
-            "reserve": "DAI",
-            "amount": "50",
-            "user": "1"
-          },
-          "expected": "success"
-        },
-        {
-          "name": "approve",
-          "args": {
-            "reserve": "DAI",
-            "user": "1"
-          },
-          "expected": "success"
-        },
-        {
-          "name": "repay",
-          "args": {
-            "reserve": "DAI",
-            "amount": "-1",
-            "user": "1",
-            "onBehalfOf": "1",
-            "borrowRateMode": "variable"
-          },
-          "expected": "success"
+          "expected": "revert",
+          "revertMessage": "31"
         }
       ]
     }

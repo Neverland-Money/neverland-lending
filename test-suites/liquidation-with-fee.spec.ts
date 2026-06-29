@@ -4,7 +4,7 @@ import { MAX_UINT_AMOUNT, oneEther } from '../helpers/constants';
 import { convertToCurrencyDecimals } from '../helpers/contracts-helpers';
 import { ProtocolErrors, RateMode } from '../helpers/types';
 import { AToken__factory } from '../types';
-import { calcExpectedStableDebtTokenBalance } from './helpers/utils/calculations';
+import { calcExpectedVariableDebtTokenBalance } from './helpers/utils/calculations';
 import { getReserveData, getUserData } from './helpers/utils/helpers';
 import { makeSuite } from './helpers/make-suite';
 import { HardhatRuntimeEnvironment } from 'hardhat/types';
@@ -13,7 +13,7 @@ import { waitForTx, increaseTime, evmSnapshot, evmRevert } from '@aave/deploy-v3
 declare var hre: HardhatRuntimeEnvironment;
 
 makeSuite('Pool Liquidation: Add fee to liquidations', (testEnv) => {
-  const { INVALID_HF } = ProtocolErrors;
+  const { INVALID_HF, STABLE_BORROWING_NOT_ENABLED } = ProtocolErrors;
 
   before(async () => {
     const { addressesProvider, oracle } = testEnv;
@@ -238,9 +238,15 @@ makeSuite('Pool Liquidation: Add fee to liquidations', (testEnv) => {
       userGlobalData.availableBorrowsBase.div(daiPrice).percentMul(9500).toString()
     );
 
+    await expect(
+      pool
+        .connect(borrower.signer)
+        .borrow(dai.address, amountDAIToBorrow, RateMode.Stable, '0', borrower.address)
+    ).to.be.revertedWith(STABLE_BORROWING_NOT_ENABLED);
+
     await pool
       .connect(borrower.signer)
-      .borrow(dai.address, amountDAIToBorrow, RateMode.Stable, '0', borrower.address);
+      .borrow(dai.address, amountDAIToBorrow, RateMode.Variable, '0', borrower.address);
 
     const userGlobalDataAfter = await pool.getUserAccountData(borrower.address);
 
@@ -302,7 +308,7 @@ makeSuite('Pool Liquidation: Add fee to liquidations', (testEnv) => {
       borrower.address
     );
 
-    const amountToLiquidate = userReserveDataBefore.currentStableDebt.div(2);
+    const amountToLiquidate = userReserveDataBefore.currentVariableDebt.div(2);
 
     const wethLiquidationProtocolFee = await helpersContract.getLiquidationProtocolFee(
       weth.address
@@ -358,15 +364,14 @@ makeSuite('Pool Liquidation: Add fee to liquidations', (testEnv) => {
       (await hre.ethers.provider.getBlock(tx.blockNumber)).timestamp
     );
 
-    const stableDebtBeforeTx = calcExpectedStableDebtTokenBalance(
-      userReserveDataBefore.principalStableDebt,
-      userReserveDataBefore.stableBorrowRate,
-      userReserveDataBefore.stableRateLastUpdated,
+    const variableDebtBeforeTx = calcExpectedVariableDebtTokenBalance(
+      daiReserveDataBefore,
+      userReserveDataBefore,
       txTimestamp
     );
 
-    expect(userReserveDataAfter.currentStableDebt).to.be.closeTo(
-      stableDebtBeforeTx.sub(amountToLiquidate),
+    expect(userReserveDataAfter.currentVariableDebt).to.be.closeTo(
+      variableDebtBeforeTx.sub(amountToLiquidate),
       2,
       'Invalid user debt after liquidation'
     );
@@ -476,9 +481,15 @@ makeSuite('Pool Liquidation: Add fee to liquidations', (testEnv) => {
       userGlobalData.availableBorrowsBase.div(usdcPrice).percentMul(9502).toString()
     );
 
+    await expect(
+      pool
+        .connect(borrower.signer)
+        .borrow(usdc.address, amountUSDCToBorrow, RateMode.Stable, '0', borrower.address)
+    ).to.be.revertedWith(STABLE_BORROWING_NOT_ENABLED);
+
     await pool
       .connect(borrower.signer)
-      .borrow(usdc.address, amountUSDCToBorrow, RateMode.Stable, '0', borrower.address);
+      .borrow(usdc.address, amountUSDCToBorrow, RateMode.Variable, '0', borrower.address);
 
     //drops HF below 1
     await oracle.setAssetPrice(usdc.address, usdcPrice.percentMul(11200));
@@ -508,7 +519,7 @@ makeSuite('Pool Liquidation: Add fee to liquidations', (testEnv) => {
     );
     const treasuryBalanceBefore = treasuryDataBefore.currentATokenBalance;
 
-    const amountToLiquidate = userReserveDataBefore.currentStableDebt.div(2);
+    const amountToLiquidate = userReserveDataBefore.currentVariableDebt.div(2);
 
     const wethLiquidationProtocolFee = await helpersContract.getLiquidationProtocolFee(
       weth.address
@@ -555,8 +566,8 @@ makeSuite('Pool Liquidation: Add fee to liquidations', (testEnv) => {
 
     expect(userGlobalDataAfter.healthFactor).to.be.gt(oneEther, 'Invalid health factor');
 
-    expect(userReserveDataAfter.currentStableDebt).to.be.closeTo(
-      userReserveDataBefore.currentStableDebt.sub(amountToLiquidate),
+    expect(userReserveDataAfter.currentVariableDebt).to.be.closeTo(
+      userReserveDataBefore.currentVariableDebt.sub(amountToLiquidate),
       2,
       'Invalid user borrow balance after liquidation'
     );
@@ -658,7 +669,7 @@ makeSuite('Pool Liquidation: Add fee to liquidations', (testEnv) => {
     const usdcReserveDataBefore = await getReserveData(helpersContract, usdc.address);
     const aaveReserveDataBefore = await getReserveData(helpersContract, aave.address);
 
-    const amountToLiquidate = userReserveDataBefore.currentStableDebt.div(2);
+    const amountToLiquidate = userReserveDataBefore.currentVariableDebt.div(2);
 
     const collateralPrice = await oracle.getAssetPrice(aave.address);
     const principalPrice = await oracle.getAssetPrice(usdc.address);
@@ -728,8 +739,8 @@ makeSuite('Pool Liquidation: Add fee to liquidations', (testEnv) => {
 
     expect(userGlobalDataAfter.healthFactor).to.be.gt(oneEther, 'Invalid health factor');
 
-    expect(userReserveDataAfter.currentStableDebt).to.be.closeTo(
-      userReserveDataBefore.currentStableDebt.sub(expectedPrincipal),
+    expect(userReserveDataAfter.currentVariableDebt).to.be.closeTo(
+      userReserveDataBefore.currentVariableDebt.sub(expectedPrincipal),
       2,
       'Invalid user borrow balance after liquidation'
     );
@@ -758,13 +769,15 @@ makeSuite('Pool Liquidation: Add fee to liquidations', (testEnv) => {
       'Invalid collateral total liquidity'
     );
 
-    expect(aAaveTokenBalanceBefore).to.be.equal(
-      aAaveTokenBalanceAfter.sub(expectedLiquidationReward),
+    expect(aAaveTokenBalanceAfter.sub(aAaveTokenBalanceBefore)).to.be.closeTo(
+      expectedLiquidationReward,
+      1,
       'Liquidator aToken balance incorrect'
     );
 
-    expect(treasuryBalanceBefore).to.be.equal(
-      treasuryBalanceAfter.sub(liquidationProtocolFee),
+    expect(treasuryBalanceAfter.sub(treasuryBalanceBefore)).to.be.closeTo(
+      liquidationProtocolFee,
+      1,
       'Treasury aToken balance incorrect'
     );
 
@@ -825,7 +838,7 @@ makeSuite('Pool Liquidation: Add fee to liquidations', (testEnv) => {
     const usdcReserveDataBefore = await getReserveData(helpersContract, usdc.address);
     const aaveReserveDataBefore = await getReserveData(helpersContract, aave.address);
 
-    const amountToLiquidate = userReserveDataBefore.currentStableDebt.div(2);
+    const amountToLiquidate = userReserveDataBefore.currentVariableDebt.div(2);
 
     const collateralPrice = await oracle.getAssetPrice(aave.address);
     const principalPrice = await oracle.getAssetPrice(usdc.address);
@@ -895,8 +908,8 @@ makeSuite('Pool Liquidation: Add fee to liquidations', (testEnv) => {
 
     expect(userGlobalDataAfter.healthFactor).to.be.gt(oneEther, 'Invalid health factor');
 
-    expect(userReserveDataAfter.currentStableDebt).to.be.closeTo(
-      userReserveDataBefore.currentStableDebt.sub(expectedPrincipal),
+    expect(userReserveDataAfter.currentVariableDebt).to.be.closeTo(
+      userReserveDataBefore.currentVariableDebt.sub(expectedPrincipal),
       2,
       'Invalid user borrow balance after liquidation'
     );
@@ -925,13 +938,15 @@ makeSuite('Pool Liquidation: Add fee to liquidations', (testEnv) => {
       'Invalid collateral total liquidity'
     );
 
-    expect(aAaveTokenBalanceBefore).to.be.equal(
-      aAaveTokenBalanceAfter.sub(expectedLiquidationReward),
+    expect(aAaveTokenBalanceAfter.sub(aAaveTokenBalanceBefore)).to.be.closeTo(
+      expectedLiquidationReward,
+      1,
       'Liquidator aToken balance incorrect'
     );
 
-    expect(treasuryBalanceBefore).to.be.equal(
-      treasuryBalanceAfter.sub(liquidationProtocolFee),
+    expect(treasuryBalanceAfter.sub(treasuryBalanceBefore)).to.be.closeTo(
+      liquidationProtocolFee,
+      1,
       'Treasury aToken balance incorrect'
     );
   });

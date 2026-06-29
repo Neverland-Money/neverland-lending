@@ -25,6 +25,12 @@ makeSuite('Pool: Simple FlashLoan', (testEnv: TestEnv) => {
   } = ProtocolErrors;
   const TOTAL_PREMIUM = 9;
   const PREMIUM_TO_PROTOCOL = 3000;
+  const PERCENTAGE_FACTOR = BigNumber.from(10000);
+
+  const percentMulCeil = (value: BigNumber, percentage: number) => {
+    const product = value.mul(percentage);
+    return product.div(PERCENTAGE_FACTOR).add(product.mod(PERCENTAGE_FACTOR).isZero() ? 0 : 1);
+  };
 
   before(async () => {
     const { addressesProvider, deployer } = testEnv;
@@ -70,8 +76,8 @@ makeSuite('Pool: Simple FlashLoan', (testEnv: TestEnv) => {
     const { pool, helpersContract, weth, aWETH } = testEnv;
 
     const wethFlashBorrowedAmount = ethers.utils.parseEther('0.8');
-    const wethTotalFees = wethFlashBorrowedAmount.mul(TOTAL_PREMIUM).div(10000);
-    const wethFeesToProtocol = wethTotalFees.mul(PREMIUM_TO_PROTOCOL).div(10000);
+    const wethTotalFees = percentMulCeil(wethFlashBorrowedAmount, TOTAL_PREMIUM);
+    const wethFeesToProtocol = wethTotalFees.percentMul(PREMIUM_TO_PROTOCOL);
     const wethFeesToLp = wethTotalFees.sub(wethFeesToProtocol);
 
     const wethLiquidityIndexAdded = wethFeesToLp
@@ -112,7 +118,7 @@ makeSuite('Pool: Simple FlashLoan', (testEnv: TestEnv) => {
     expect(wethCurrentLiquidityIndex).to.be.equal(
       wethLiquidityIndexBefore.add(wethLiquidityIndexAdded)
     );
-    expect(wethReservesAfter).to.be.equal(wethReservesBefore.add(wethFeesToProtocol));
+    expect(wethReservesAfter).to.be.closeTo(wethReservesBefore.add(wethFeesToProtocol), 1);
 
     // Check event values for `ReserveDataUpdated`
     const reserveDataUpdatedEvents = tx.events?.filter(
@@ -143,8 +149,8 @@ makeSuite('Pool: Simple FlashLoan', (testEnv: TestEnv) => {
 
     const flashBorrowedAmount = totalLiquidityBefore;
 
-    const totalFees = flashBorrowedAmount.mul(TOTAL_PREMIUM).div(10000);
-    const feesToProtocol = totalFees.mul(PREMIUM_TO_PROTOCOL).div(10000);
+    const totalFees = percentMulCeil(flashBorrowedAmount, TOTAL_PREMIUM);
+    const feesToProtocol = totalFees.percentMul(PREMIUM_TO_PROTOCOL);
     const feesToLp = totalFees.sub(feesToProtocol);
     const liquidityIndexBefore = reserveData.liquidityIndex;
     const liquidityIndexAdded = feesToLp
@@ -178,7 +184,7 @@ makeSuite('Pool: Simple FlashLoan', (testEnv: TestEnv) => {
     expect(currentLiquidityIndex).to.be.equal(liquidityIndexBefore.add(liquidityIndexAdded));
     expect(
       reservesAfter.sub(feesToProtocol).mul(liquidityIndexBefore).div(currentLiquidityIndex)
-    ).to.be.equal(reservesBefore);
+    ).to.be.closeTo(reservesBefore, 2);
   });
 
   it('Takes a simple ETH flashloan after flashloaning disabled', async () => {
@@ -286,8 +292,8 @@ makeSuite('Pool: Simple FlashLoan', (testEnv: TestEnv) => {
     await _mockFlashLoanSimpleReceiver.setFailExecutionTransfer(false);
 
     const flashBorrowedAmount = await convertToCurrencyDecimals(usdc.address, '500');
-    const totalFees = flashBorrowedAmount.mul(TOTAL_PREMIUM).div(10000);
-    const feesToProtocol = totalFees.mul(PREMIUM_TO_PROTOCOL).div(10000);
+    const totalFees = percentMulCeil(flashBorrowedAmount, TOTAL_PREMIUM);
+    const feesToProtocol = totalFees.percentMul(PREMIUM_TO_PROTOCOL);
     const feesToLp = totalFees.sub(feesToProtocol);
     const liquidityIndexAdded = feesToLp
       .mul(ethers.BigNumber.from(10).pow(27))
@@ -323,7 +329,7 @@ makeSuite('Pool: Simple FlashLoan', (testEnv: TestEnv) => {
     expect(totalLiquidityBefore.add(totalFees)).to.be.closeTo(totalLiquidityAfter, 2);
     expect(currentLiquidityRate).to.be.equal(0);
     expect(currentLiquidityIndex).to.be.equal(liquidityIndexBefore.add(liquidityIndexAdded));
-    expect(reservesAfter).to.be.equal(reservesBefore.add(feesToProtocol));
+    expect(reservesAfter).to.be.closeTo(reservesBefore.add(feesToProtocol), 1);
   });
 
   it('Takes out a 500 USDC flashloan with mode = 0, does not return the funds (revert expected)', async () => {

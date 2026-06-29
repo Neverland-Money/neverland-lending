@@ -5,14 +5,13 @@ import {GPv2SafeERC20} from '../../../dependencies/gnosis/contracts/GPv2SafeERC2
 import {SafeCast} from '../../../dependencies/openzeppelin/contracts/SafeCast.sol';
 import {IERC20} from '../../../dependencies/openzeppelin/contracts/IERC20.sol';
 import {IAToken} from '../../../interfaces/IAToken.sol';
+import {IPool} from '../../../interfaces/IPool.sol';
 import {IFlashLoanReceiver} from '../../../flashloan/interfaces/IFlashLoanReceiver.sol';
 import {IFlashLoanSimpleReceiver} from '../../../flashloan/interfaces/IFlashLoanSimpleReceiver.sol';
 import {IPoolAddressesProvider} from '../../../interfaces/IPoolAddressesProvider.sol';
-import {UserConfiguration} from '../configuration/UserConfiguration.sol';
-import {ReserveConfiguration} from '../configuration/ReserveConfiguration.sol';
 import {Errors} from '../helpers/Errors.sol';
-import {WadRayMath} from '../math/WadRayMath.sol';
 import {PercentageMath} from '../math/PercentageMath.sol';
+import {TokenMath} from '../helpers/TokenMath.sol';
 import {DataTypes} from '../types/DataTypes.sol';
 import {ValidationLogic} from './ValidationLogic.sol';
 import {BorrowLogic} from './BorrowLogic.sol';
@@ -27,9 +26,8 @@ library FlashLoanLogic {
   using ReserveLogic for DataTypes.ReserveCache;
   using ReserveLogic for DataTypes.ReserveData;
   using GPv2SafeERC20 for IERC20;
-  using ReserveConfiguration for DataTypes.ReserveConfigurationMap;
-  using WadRayMath for uint256;
   using PercentageMath for uint256;
+  using TokenMath for uint256;
   using SafeCast for uint256;
 
   // See `IPool` for descriptions
@@ -52,6 +50,8 @@ library FlashLoanLogic {
     uint256[] totalPremiums;
     uint256 flashloanPremiumTotal;
     uint256 flashloanPremiumToProtocol;
+    DataTypes.InterestRateMode interestRateMode;
+    uint8 userEModeCategory;
   }
 
   /**
@@ -91,9 +91,13 @@ library FlashLoanLogic {
 
     for (vars.i = 0; vars.i < params.assets.length; vars.i++) {
       vars.currentAmount = params.amounts[vars.i];
-      vars.totalPremiums[vars.i] = DataTypes.InterestRateMode(params.interestRateModes[vars.i]) ==
-        DataTypes.InterestRateMode.NONE
-        ? vars.currentAmount.percentMul(vars.flashloanPremiumTotal)
+      vars.interestRateMode = DataTypes.InterestRateMode(params.interestRateModes[vars.i]);
+      require(
+        vars.interestRateMode != DataTypes.InterestRateMode.STABLE,
+        Errors.STABLE_BORROWING_NOT_ENABLED
+      );
+      vars.totalPremiums[vars.i] = vars.interestRateMode == DataTypes.InterestRateMode.NONE
+        ? vars.currentAmount.percentMulCeil(vars.flashloanPremiumTotal)
         : 0;
       IAToken(reservesData[params.assets[vars.i]].aTokenAddress).transferUnderlyingTo(
         params.receiverAddress,
@@ -115,11 +119,14 @@ library FlashLoanLogic {
     for (vars.i = 0; vars.i < params.assets.length; vars.i++) {
       vars.currentAsset = params.assets[vars.i];
       vars.currentAmount = params.amounts[vars.i];
+      vars.interestRateMode = DataTypes.InterestRateMode(params.interestRateModes[vars.i]);
 
-      if (
-        DataTypes.InterestRateMode(params.interestRateModes[vars.i]) ==
-        DataTypes.InterestRateMode.NONE
-      ) {
+      require(
+        vars.interestRateMode != DataTypes.InterestRateMode.STABLE,
+        Errors.STABLE_BORROWING_NOT_ENABLED
+      );
+
+      if (vars.interestRateMode == DataTypes.InterestRateMode.NONE) {
         _handleFlashLoanRepayment(
           reservesData[vars.currentAsset],
           DataTypes.FlashLoanRepaymentParams({
@@ -134,6 +141,9 @@ library FlashLoanLogic {
       } else {
         // If the user chose to not return the funds, the system checks if there is enough collateral and
         // eventually opens a debt position
+        vars.userEModeCategory = IPool(IPoolAddressesProvider(params.addressesProvider).getPool())
+          .getUserEMode(params.onBehalfOf)
+          .toUint8();
         BorrowLogic.executeBorrow(
           reservesData,
           reservesList,
@@ -144,13 +154,13 @@ library FlashLoanLogic {
             user: msg.sender,
             onBehalfOf: params.onBehalfOf,
             amount: vars.currentAmount,
-            interestRateMode: DataTypes.InterestRateMode(params.interestRateModes[vars.i]),
+            interestRateMode: vars.interestRateMode,
             referralCode: params.referralCode,
             releaseUnderlying: false,
             maxStableRateBorrowSizePercent: params.maxStableRateBorrowSizePercent,
             reservesCount: params.reservesCount,
             oracle: IPoolAddressesProvider(params.addressesProvider).getPriceOracle(),
-            userEModeCategory: params.userEModeCategory,
+            userEModeCategory: vars.userEModeCategory,
             priceOracleSentinel: IPoolAddressesProvider(params.addressesProvider)
               .getPriceOracleSentinel()
           })
@@ -161,7 +171,7 @@ library FlashLoanLogic {
           msg.sender,
           vars.currentAsset,
           vars.currentAmount,
-          DataTypes.InterestRateMode(params.interestRateModes[vars.i]),
+          vars.interestRateMode,
           0,
           params.referralCode
         );
@@ -187,10 +197,10 @@ library FlashLoanLogic {
     // is altered to (validation -> user payload -> cache -> updateState -> changeState -> updateRates) for flashloans.
     // This is done to protect against reentrance and rate manipulation within the user specified payload.
 
-    ValidationLogic.validateFlashloanSimple(reserve);
+    ValidationLogic.validateFlashloanSimple(reserve, params.amount);
 
     IFlashLoanSimpleReceiver receiver = IFlashLoanSimpleReceiver(params.receiverAddress);
-    uint256 totalPremium = params.amount.percentMul(params.flashLoanPremiumTotal);
+    uint256 totalPremium = params.amount.percentMulCeil(params.flashLoanPremiumTotal);
     IAToken(reserve.aTokenAddress).transferUnderlyingTo(params.receiverAddress, params.amount);
 
     require(
@@ -235,12 +245,12 @@ library FlashLoanLogic {
     reserve.updateState(reserveCache);
     reserveCache.nextLiquidityIndex = reserve.cumulateToLiquidityIndex(
       IERC20(reserveCache.aTokenAddress).totalSupply() +
-        uint256(reserve.accruedToTreasury).rayMul(reserveCache.nextLiquidityIndex),
+        uint256(reserve.accruedToTreasury).getATokenBalance(reserveCache.nextLiquidityIndex),
       premiumToLP
     );
 
     reserve.accruedToTreasury += premiumToProtocol
-      .rayDiv(reserveCache.nextLiquidityIndex)
+      .getATokenMintScaledAmount(reserveCache.nextLiquidityIndex)
       .toUint128();
 
     reserve.updateInterestRates(reserveCache, params.asset, amountPlusPremium, 0);
