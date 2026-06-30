@@ -846,7 +846,7 @@ makeSuite('Pool: Edge cases', (testEnv: TestEnv) => {
     // At this point totalSupply + accruedToTreasury is ~100090 WETH: 100000 from supply and ~90 from
     // accruedToTreasury (the full flash premium now accrues to the treasury), so to properly test the
     // supply cap condition:
-    // - Set supply cap above that, at 110 WETH
+    // - Set supply cap above that, at 100000 + 110 WETH
     // - Try to supply 30 WETH more. Should work if accruedToTreasury were ignored, but it is counted, so it reverts
     // - Try to supply 5 WETH more. Should work
 
