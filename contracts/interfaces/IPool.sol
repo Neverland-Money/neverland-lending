@@ -536,6 +536,22 @@ interface IPool {
   ) external;
 
   /**
+   * @notice Accrues the reserve indexes and treasury share up to the current block
+   * @dev Only callable by the PoolConfigurator contract. Settles the elapsed interval at the prevailing
+   *      reserve factor before an admin parameter change re-prices it.
+   * @param asset The address of the underlying asset of the reserve
+   */
+  function syncIndexesState(address asset) external;
+
+  /**
+   * @notice Recomputes the reserve interest rates from current state
+   * @dev Only callable by the PoolConfigurator contract. Run after an admin parameter change so the new
+   *      value governs forward rates.
+   * @param asset The address of the underlying asset of the reserve
+   */
+  function syncRatesState(address asset) external;
+
+  /**
    * @notice Returns the configuration of the reserve
    * @param asset The address of the underlying asset of the reserve
    * @return The configuration of the reserve
