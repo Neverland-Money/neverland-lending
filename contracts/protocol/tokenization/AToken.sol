@@ -236,7 +236,7 @@ contract AToken is
     amount.toUint128();
 
     uint256 currentAllowance = this.allowance(sender, _msgSender());
-    currentAllowance - amount;
+    require(currentAllowance >= amount, Errors.INSUFFICIENT_ALLOWANCE);
 
     if (currentAllowance == type(uint256).max) {
       _transfer(sender, recipient, amount, true);

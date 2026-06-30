@@ -109,7 +109,7 @@ library SupplyLogic {
     DataTypes.ReserveData storage reserve = reservesData[params.asset];
     DataTypes.ReserveCache memory reserveCache = reserve.cache();
 
-    require(params.to != reserveCache.aTokenAddress, Errors.INVALID_AMOUNT);
+    require(params.to != reserveCache.aTokenAddress, Errors.WITHDRAW_TO_ATOKEN);
 
     reserve.updateState(reserveCache);
 
