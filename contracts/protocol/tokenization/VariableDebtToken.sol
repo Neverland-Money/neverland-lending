@@ -257,7 +257,7 @@ contract VariableDebtToken is
     uint256 correctedAmount
   ) private {
     uint256 oldBorrowAllowance = _borrowAllowances[delegator][delegatee];
-    oldBorrowAllowance - amount;
+    require(oldBorrowAllowance >= amount, Errors.INSUFFICIENT_ALLOWANCE);
 
     uint256 consumption = oldBorrowAllowance >= correctedAmount
       ? correctedAmount

@@ -72,7 +72,7 @@ library ValidationLogic {
     require(isActive, Errors.RESERVE_INACTIVE);
     require(!isPaused, Errors.RESERVE_PAUSED);
     require(!isFrozen, Errors.RESERVE_FROZEN);
-    require(onBehalfOf != reserveCache.aTokenAddress, Errors.INVALID_AMOUNT);
+    require(onBehalfOf != reserveCache.aTokenAddress, Errors.SUPPLY_TO_ATOKEN);
 
     uint256 supplyCap = reserveCache.reserveConfiguration.getSupplyCap();
     require(
