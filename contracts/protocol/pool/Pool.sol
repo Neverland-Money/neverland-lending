@@ -137,15 +137,17 @@ contract Pool is VersionedInitializable, PoolStorage, IPool {
     bytes32 permitR,
     bytes32 permitS
   ) public virtual override {
-    IERC20WithPermit(asset).permit(
-      msg.sender,
-      address(this),
-      amount,
-      deadline,
-      permitV,
-      permitR,
-      permitS
-    );
+    try
+      IERC20WithPermit(asset).permit(
+        msg.sender,
+        address(this),
+        amount,
+        deadline,
+        permitV,
+        permitR,
+        permitS
+      )
+    {} catch {}
     SupplyLogic.executeSupply(
       _reserves,
       _reservesList,
@@ -246,15 +248,17 @@ contract Pool is VersionedInitializable, PoolStorage, IPool {
     bytes32 permitS
   ) public virtual override returns (uint256) {
     {
-      IERC20WithPermit(asset).permit(
-        msg.sender,
-        address(this),
-        amount,
-        deadline,
-        permitV,
-        permitR,
-        permitS
-      );
+      try
+        IERC20WithPermit(asset).permit(
+          msg.sender,
+          address(this),
+          amount,
+          deadline,
+          permitV,
+          permitR,
+          permitS
+        )
+      {} catch {}
     }
     {
       DataTypes.ExecuteRepayParams memory params = DataTypes.ExecuteRepayParams({
