@@ -243,9 +243,10 @@ interface IPoolConfigurator {
   );
 
   /**
-   * @dev Emitted when the part of the premium that goes to protocol is updated.
-   * @param oldFlashloanPremiumToProtocol The old premium, expressed in bps
-   * @param newFlashloanPremiumToProtocol The new premium, expressed in bps
+   * @dev Emitted when the vestigial flash-loan-premium-to-protocol config value is updated.
+   * This value is retained for ABI/storage compatibility and no longer routes premium value.
+   * @param oldFlashloanPremiumToProtocol The old configured value, expressed in bps
+   * @param newFlashloanPremiumToProtocol The new configured value, expressed in bps
    */
   event FlashloanPremiumToProtocolUpdated(
     uint128 oldFlashloanPremiumToProtocol,
@@ -454,10 +455,8 @@ interface IPoolConfigurator {
   function updateBridgeProtocolFee(uint256 newBridgeProtocolFee) external;
 
   /**
-   * @notice Updates the total flash loan premium.
-   * Total flash loan premium consists of two parts:
-   * - A part is sent to aToken holders as extra balance
-   * - A part is collected by the protocol reserves
+   * @notice Updates the total flash loan premium. The premium accrues entirely to the protocol
+   * treasury; there is no aToken-holder share.
    * @dev Expressed in bps
    * @dev The premium is calculated on the total amount borrowed
    * @param newFlashloanPremiumTotal The total flashloan premium
@@ -465,10 +464,11 @@ interface IPoolConfigurator {
   function updateFlashloanPremiumTotal(uint128 newFlashloanPremiumTotal) external;
 
   /**
-   * @notice Updates the flash loan premium collected by protocol reserves
+   * @notice Updates the flash-loan-premium-to-protocol value.
+   * @dev Vestigial: the entire flash-loan premium accrues to the treasury; this value no longer
+   * routes any share (retained for ABI/storage stability).
    * @dev Expressed in bps
-   * @dev The premium to protocol is calculated on the total flashloan premium
-   * @param newFlashloanPremiumToProtocol The part of the flashloan premium sent to the protocol treasury
+   * @param newFlashloanPremiumToProtocol The configured value; it no longer affects premium routing
    */
   function updateFlashloanPremiumToProtocol(uint128 newFlashloanPremiumToProtocol) external;
 

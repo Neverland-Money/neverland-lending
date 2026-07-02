@@ -237,19 +237,16 @@ library FlashLoanLogic {
     DataTypes.ReserveData storage reserve,
     DataTypes.FlashLoanRepaymentParams memory params
   ) internal {
-    uint256 premiumToProtocol = params.totalPremium.percentMul(params.flashLoanPremiumToProtocol);
-    uint256 premiumToLP = params.totalPremium - premiumToProtocol;
     uint256 amountPlusPremium = params.amount + params.totalPremium;
 
     DataTypes.ReserveCache memory reserveCache = reserve.cache();
     reserve.updateState(reserveCache);
-    reserveCache.nextLiquidityIndex = reserve.cumulateToLiquidityIndex(
-      IERC20(reserveCache.aTokenAddress).totalSupply() +
-        uint256(reserve.accruedToTreasury).getATokenBalance(reserveCache.nextLiquidityIndex),
-      premiumToLP
-    );
 
-    reserve.accruedToTreasury += premiumToProtocol
+    // The entire flash-loan premium accrues to the treasury (Aave v3.5 behaviour): no LP/protocol
+    // split and no liquidityIndex bump. `params.flashLoanPremiumToProtocol` is retained for ABI /
+    // storage stability but no longer routes the premium.
+    reserve.accruedToTreasury += params
+      .totalPremium
       .getATokenMintScaledAmount(reserveCache.nextLiquidityIndex)
       .toUint128();
 

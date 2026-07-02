@@ -18,15 +18,15 @@
  *   2. Boundary pin: at amount=555 / 9 bps the half-up reference rounds to 0
  *      while ceil rounds to 1 (drift = +1 wei), so the test is exactly on
  *      the divergence boundary that proves the patched direction.
- *   3. Treasury-share routing when premiumToProtocol > 0: accruedToTreasury
- *      (and the treasury aToken balance after mintToTreasury) grows by the
- *      expected protocol share.
+ *   3. Full-premium treasury routing: accruedToTreasury (and the treasury
+ *      aToken balance after mintToTreasury) grows by the full premium even
+ *      when premiumToProtocol is configured to a non-zero vestigial value.
  *
  * VARIABLE RATE ONLY (flashLoanSimple has no rate mode; no borrow/repay here
  * uses anything other than the variable path).
  */
 
-import { evmRevert, evmSnapshot, waitForTx } from '@aave/deploy-v3';
+import { evmRevert, evmSnapshot, increaseTime, waitForTx } from '@aave/deploy-v3';
 import { getVariableDebtToken } from '@aave/deploy-v3/dist/helpers/contract-getters';
 import { expect } from 'chai';
 import { BigNumber } from 'ethers';
@@ -82,8 +82,8 @@ makeSuite('Neverland rounding patch: flashloan premium rounding', (testEnv: Test
       addressesProvider,
     } = testEnv;
 
-    // 1. Premium config: 9 bps total, all to LPs (protocol share 0) so the
-    //    full premium leaves the receiver and lands on the reserve.
+    // 1. Premium config: 9 bps total. premiumToProtocol is vestigial now; the
+    //    full premium leaves the receiver and accrues through the treasury path.
     await waitForTx(await configurator.updateFlashloanPremiumTotal(FLASH_PREMIUM_TOTAL_BPS));
     await waitForTx(await configurator.updateFlashloanPremiumToProtocol(0));
     await waitForTx(await configurator.setReserveFlashLoaning(weth.address, true));
@@ -260,7 +260,7 @@ makeSuite('Neverland rounding patch: flashloan premium rounding', (testEnv: Test
     expect(await variableDebtUsdc.balanceOf(receiver.address)).to.be.gte(borrowUsdc);
   });
 
-  it('routes the expected protocol share to the treasury when premiumToProtocol > 0', async () => {
+  it('routes the full premium to the treasury (premiumToProtocol no longer routes)', async () => {
     const {
       deployer,
       users: [liquidity],
@@ -297,13 +297,11 @@ makeSuite('Neverland rounding patch: flashloan premium rounding', (testEnv: Test
     const preFund = await convertToCurrencyDecimals(weth.address, '1');
     await weth['mint(address,uint256)'](receiver.address, preFund);
 
-    // 4. Realistic amount (0.8 WETH) so the protocol share is strictly > 0.
+    // 4. The full premium accrues to the treasury regardless of premiumToProtocol (which is set to
+    //    30% here only to prove it no longer affects routing).
     const flashAmount = await convertToCurrencyDecimals(weth.address, '0.8');
     const totalFees = percentMulCeil(flashAmount, FLASH_PREMIUM_TOTAL_BPS);
-    // FlashLoanLogic splits the (ceil) total with half-up percentMul (line 240
-    // of FlashLoanLogic.sol): protocol share = percentMul(total, premiumToProtocol).
-    const feesToProtocol = percentMulHalfUp(totalFees, PREMIUM_TO_PROTOCOL);
-    expect(feesToProtocol).to.be.gt(0, 'protocol share must be strictly positive at this amount');
+    expect(totalFees).to.be.gt(0, 'premium must be strictly positive at this amount');
 
     const treasury = await aWETH.RESERVE_TREASURY_ADDRESS();
     const accruedBefore = (await pool.getReserveData(weth.address)).accruedToTreasury;
@@ -322,40 +320,64 @@ makeSuite('Neverland rounding patch: flashloan premium rounding', (testEnv: Test
       'receiver outflow must equal the full ceil premium'
     );
 
-    // 6. The protocol share accrued to treasury (scaled counter strictly grew).
+    // 6. The full premium accrued to treasury (scaled counter strictly grew).
     const accruedAfter = (await pool.getReserveData(weth.address)).accruedToTreasury;
     expect(accruedAfter).to.be.gt(accruedBefore, 'accruedToTreasury must strictly grow');
 
-    // 7. Realize it and confirm the treasury aToken balance grew by the
-    //    expected protocol share (closeTo: scaling rounds within a couple wei).
+    // 7. Realize it and confirm the treasury aToken balance grew by the FULL premium
+    //    (closeTo: scaling rounds within a couple wei).
     await waitForTx(await pool.mintToTreasury([weth.address]));
     const treasuryBalAfter = await aWETH.balanceOf(treasury);
-    expect(treasuryBalAfter.sub(treasuryBalBefore)).to.be.closeTo(feesToProtocol, 2);
+    expect(treasuryBalAfter.sub(treasuryBalBefore)).to.be.closeTo(totalFees, 2);
     expect(treasuryBalAfter).to.be.gt(treasuryBalBefore, 'treasury balance must strictly grow');
 
     // 8. Cross-check the data provider exposes the same flashloan-enabled flag.
     expect(await helpersContract.getFlashLoanEnabled(weth.address)).to.equal(true);
   }).timeout(120_000);
 
-  it('keeps sub-scaled protocol-share dust in reserve cash instead of over-crediting treasury', async () => {
+  it('keeps a sub-scaled full premium in reserve cash instead of over-crediting treasury', async () => {
     const {
       deployer,
-      users: [liquidity],
+      users: [liquidity, borrower],
       pool,
       configurator,
       weth,
       aWETH,
+      dai,
       addressesProvider,
     } = testEnv;
 
     await waitForTx(await configurator.updateFlashloanPremiumTotal(FLASH_PREMIUM_TOTAL_BPS));
-    await waitForTx(await configurator.updateFlashloanPremiumToProtocol(0));
     await waitForTx(await configurator.setReserveFlashLoaning(weth.address, true));
 
     const seedAmount = await convertToCurrencyDecimals(weth.address, '100');
     await weth.connect(liquidity.signer)['mint(address,uint256)'](liquidity.address, seedAmount);
     await weth.connect(liquidity.signer).approve(pool.address, MAX_UINT_AMOUNT);
     await pool.connect(liquidity.signer).supply(weth.address, seedAmount, liquidity.address, '0');
+
+    // Lift the WETH liquidity index above RAY via interest. The premium no longer bumps the index,
+    // so a real borrow (against DAI collateral) accruing for a year is the only way to raise it;
+    // the debt is then fully repaid so the rate returns to 0 and the dust flash accrues no interest.
+    const daiCollateral = await convertToCurrencyDecimals(dai.address, '2000000');
+    const wethBorrow = await convertToCurrencyDecimals(weth.address, '50');
+    await dai.connect(borrower.signer)['mint(uint256)'](daiCollateral);
+    await dai.connect(borrower.signer).approve(pool.address, MAX_UINT_AMOUNT);
+    await pool.connect(borrower.signer).supply(dai.address, daiCollateral, borrower.address, '0');
+    await pool
+      .connect(borrower.signer)
+      .borrow(weth.address, wethBorrow, RateMode.Variable, '0', borrower.address);
+    await increaseTime(365 * 24 * 60 * 60);
+    // Fund the borrower's accrued interest, then repay everything.
+    await weth
+      .connect(borrower.signer)
+      ['mint(address,uint256)'](
+        borrower.address,
+        await convertToCurrencyDecimals(weth.address, '50')
+      );
+    await weth.connect(borrower.signer).approve(pool.address, MAX_UINT_AMOUNT);
+    await pool
+      .connect(borrower.signer)
+      .repay(weth.address, MAX_UINT_AMOUNT, RateMode.Variable, borrower.address);
 
     const ReceiverFactory = await hre.ethers.getContractFactory(
       'MockFlashLoanReceiverForRounding',
@@ -368,24 +390,16 @@ makeSuite('Neverland rounding patch: flashloan premium rounding', (testEnv: Test
       await convertToCurrencyDecimals(weth.address, '1')
     );
 
-    const indexLiftFlashAmount = await convertToCurrencyDecimals(weth.address, '10');
-    await waitForTx(
-      await pool.flashLoanSimple(receiver.address, weth.address, indexLiftFlashAmount, '0x', '0')
-    );
-
-    const reserveAfterIndexLift = await pool.getReserveData(weth.address);
-    expect(reserveAfterIndexLift.liquidityIndex).to.be.gt(RAY);
-
-    await waitForTx(await configurator.updateFlashloanPremiumToProtocol(PERCENTAGE_FACTOR));
+    const reserveBeforeDust = await pool.getReserveData(weth.address);
+    expect(reserveBeforeDust.liquidityIndex).to.be.gt(RAY);
 
     const dustFlashAmount = BigNumber.from(555);
     const totalFees = percentMulCeil(dustFlashAmount, FLASH_PREMIUM_TOTAL_BPS);
-    const feesToProtocol = percentMulHalfUp(totalFees, PERCENTAGE_FACTOR);
     expect(totalFees).to.equal(1);
-    expect(feesToProtocol).to.equal(1);
-    expect(rayDivFloor(feesToProtocol, reserveAfterIndexLift.liquidityIndex)).to.equal(0);
+    // At idx > RAY the full 1-wei premium floors to 0 scaled, so nothing accrues to the treasury.
+    expect(rayDivFloor(totalFees, reserveBeforeDust.liquidityIndex)).to.equal(0);
 
-    const accruedBefore = reserveAfterIndexLift.accruedToTreasury;
+    const accruedBefore = reserveBeforeDust.accruedToTreasury;
     const receiverBalBefore = await weth.balanceOf(receiver.address);
     const aTokenCashBefore = await weth.balanceOf(aWETH.address);
 
@@ -393,10 +407,16 @@ makeSuite('Neverland rounding patch: flashloan premium rounding', (testEnv: Test
       await pool.flashLoanSimple(receiver.address, weth.address, dustFlashAmount, '0x', '0')
     );
 
+    const reserveAfterDust = await pool.getReserveData(weth.address);
     const receiverBalAfter = await weth.balanceOf(receiver.address);
     const aTokenCashAfter = await weth.balanceOf(aWETH.address);
-    const accruedAfter = (await pool.getReserveData(weth.address)).accruedToTreasury;
+    const accruedAfter = reserveAfterDust.accruedToTreasury;
 
+    // The premium does NOT bump the liquidity index (no cumulateToLiquidityIndex leg; the rate is 0
+    // after the debt was repaid). This is the assertion that distinguishes full-premium-to-treasury
+    // routing from the old LP split, which would lift the index here even for a sub-scaled premium.
+    expect(reserveAfterDust.liquidityIndex).to.equal(reserveBeforeDust.liquidityIndex);
+    // Receiver pays the full premium; the sub-scaled wei stays as reserve cash, treasury untouched.
     expect(receiverBalBefore.sub(receiverBalAfter)).to.equal(totalFees);
     expect(accruedAfter).to.equal(accruedBefore);
     expect(aTokenCashAfter.sub(aTokenCashBefore)).to.equal(totalFees);

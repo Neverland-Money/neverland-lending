@@ -71,7 +71,7 @@ makeSuite('Pool: liquidity indexes misc tests', (testEnv: TestEnv) => {
     await evmRevert(snap);
   });
 
-  it('Validates that the flash loan fee properly takes into account both aToken supply and accruedToTreasury', async () => {
+  it('Validates that repeated flash loan premiums keep reserve cash matched to scaled supply plus treasury accrual', async () => {
     const {
       pool,
       helpersContract,
@@ -82,11 +82,16 @@ makeSuite('Pool: liquidity indexes misc tests', (testEnv: TestEnv) => {
 
     /**
      * 1. Flashes 0.8 WETH
-     * 2. Flashes again 0.8 ETH (to have accruedToTreasury)
-     * 3. Validates that liquidity index took into account both aToken supply and accruedToTreasury
+     * 2. Flashes again 0.8 WETH (to grow accruedToTreasury)
+     * 3. Validates reserve cash matches depositor scaled supply plus scaled treasury accrual.
      */
 
     const wethFlashBorrowedAmount = ethers.utils.parseEther('0.8');
+
+    // The premium no longer bumps the liquidity index (the full premium accrues to the treasury), so
+    // the two flashes must leave the index unchanged. This also makes the test guard the routing change.
+    const liquidityIndexBefore = (await helpersContract.getReserveData(weth.address))
+      .liquidityIndex;
 
     await pool.flashLoan(
       _mockFlashLoanReceiver.address,
@@ -109,6 +114,8 @@ makeSuite('Pool: liquidity indexes misc tests', (testEnv: TestEnv) => {
     );
 
     const wethReserveDataAfterSecondFlash = await helpersContract.getReserveData(weth.address);
+
+    expect(wethReserveDataAfterSecondFlash.liquidityIndex).to.eq(liquidityIndexBefore);
 
     const totalScaledWithTreasuryAfterSecondFlash = (
       await aWETH.scaledBalanceOf(depositorWeth.address)

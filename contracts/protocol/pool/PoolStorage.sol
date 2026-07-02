@@ -40,7 +40,8 @@ contract PoolStorage {
   // Total FlashLoan Premium, expressed in bps
   uint128 internal _flashLoanPremiumTotal;
 
-  // FlashLoan premium paid to protocol treasury, expressed in bps
+  // Vestigial FlashLoan premium-to-protocol config, expressed in bps.
+  // Retained for ABI/storage compatibility; it no longer routes premium value.
   uint128 internal _flashLoanPremiumToProtocol;
 
   // Available liquidity that can be borrowed at once at stable rate, expressed in bps
