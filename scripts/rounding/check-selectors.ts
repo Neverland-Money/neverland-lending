@@ -55,6 +55,34 @@ function compareExact(left: AbiShape, right: AbiShape, label: string, field: key
   failed = true;
 }
 
+// Pool intentionally adds the reserve-factor accrual surface (audit #27 / AF-003):
+// syncIndexesState / syncRatesState. Both are admin-only (onlyPoolConfigurator) and add no
+// storage; they bracket setReserveFactor so the elapsed interval is settled at the old factor.
+// The gate pins exactly these two additions over the v3.0.x (@aave/core-v3) baseline.
+function comparePoolSelectors(local: AbiShape, upstream: AbiShape): void {
+  const expectedSelectors = [
+    ...upstream.selectors,
+    utils.id('syncIndexesState(address)').slice(0, 10),
+    utils.id('syncRatesState(address)').slice(0, 10),
+  ].sort();
+
+  const equal = JSON.stringify(local.selectors) === JSON.stringify(expectedSelectors);
+  console.log(`  selectors equal plus accrual extension: ${equal}`);
+  if (equal) return;
+
+  const expectedSet = new Set(expectedSelectors);
+  const localSet = new Set(local.selectors);
+  console.log(
+    '  unexpected local Pool selectors:',
+    local.selectors.filter((value) => !expectedSet.has(value))
+  );
+  console.log(
+    '  missing expected Pool selectors:',
+    expectedSelectors.filter((value) => !localSet.has(value))
+  );
+  failed = true;
+}
+
 function compareTokenEvents(local: AbiShape, upstream: AbiShape): void {
   const upstreamTopics = new Set(upstream.eventTopics);
   const localTopics = new Set(local.eventTopics);
@@ -90,7 +118,11 @@ for (const [relativePath, name] of [
 
     console.log(`  local selectors: ${local.selectors.length}`);
     console.log(`  upstream selectors: ${upstream.selectors.length}`);
-    compareExact(local, upstream, name, 'selectors');
+    if (name === 'Pool') {
+      comparePoolSelectors(local, upstream);
+    } else {
+      compareExact(local, upstream, name, 'selectors');
+    }
 
     console.log(`  local event topics: ${local.eventTopics.length}`);
     console.log(`  upstream event topics: ${upstream.eventTopics.length}`);

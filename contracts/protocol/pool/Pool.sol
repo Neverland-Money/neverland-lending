@@ -613,6 +613,16 @@ contract Pool is VersionedInitializable, PoolStorage, IPool {
   }
 
   /// @inheritdoc IPool
+  function syncIndexesState(address asset) external virtual override onlyPoolConfigurator {
+    PoolLogic.executeSyncIndexesState(_reserves[asset]);
+  }
+
+  /// @inheritdoc IPool
+  function syncRatesState(address asset) external virtual override onlyPoolConfigurator {
+    PoolLogic.executeSyncRatesState(_reserves[asset], asset);
+  }
+
+  /// @inheritdoc IPool
   function updateBridgeProtocolFee(
     uint256 protocolFee
   ) external virtual override onlyPoolConfigurator {

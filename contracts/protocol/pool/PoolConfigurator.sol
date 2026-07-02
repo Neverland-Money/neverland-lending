@@ -236,11 +236,18 @@ contract PoolConfigurator is VersionedInitializable, IPoolConfigurator {
     uint256 newReserveFactor
   ) external override onlyRiskOrPoolAdmins {
     require(newReserveFactor <= PercentageMath.PERCENTAGE_FACTOR, Errors.INVALID_RESERVE_FACTOR);
+
+    // Settle the elapsed interval at the old factor before the new one takes effect.
+    _pool.syncIndexesState(asset);
+
     DataTypes.ReserveConfigurationMap memory currentConfig = _pool.getConfiguration(asset);
     uint256 oldReserveFactor = currentConfig.getReserveFactor();
     currentConfig.setReserveFactor(newReserveFactor);
     _pool.setConfiguration(asset, currentConfig);
     emit ReserveFactorChanged(asset, oldReserveFactor, newReserveFactor);
+
+    // Refresh forward rates under the new factor.
+    _pool.syncRatesState(asset);
   }
 
   /// @inheritdoc IPoolConfigurator

@@ -44,6 +44,17 @@ const eventTopicsOf = (abi: any[]) => {
     .sort();
 };
 
+// Pool intentionally adds the reserve-factor accrual surface (audit #27 / AF-003):
+// syncIndexesState / syncRatesState. Both are admin-only and add no storage. The gate
+// pins exactly these two additions over the @aave/core-v3 (v3.0.x) baseline.
+const ADDED_POOL_SELECTORS = (() => {
+  const iface = new Interface([
+    'function syncIndexesState(address asset)',
+    'function syncRatesState(address asset)',
+  ]);
+  return Object.keys(iface.functions).map((signature) => iface.getSighash(signature));
+})();
+
 const normalizeType = (type: string) =>
   type
     .replace(/\)\d+/g, ')')
@@ -103,8 +114,13 @@ describe('Neverland rounding patch ABI surface', () => {
       ['contracts/protocol/tokenization/VariableDebtToken.sol', 'VariableDebtToken'],
       ['contracts/protocol/pool/Pool.sol', 'Pool'],
     ]) {
+      const upstreamSelectors = selectorsOf(upstreamArtifact(relativePath, name).abi);
+      const expected =
+        name === 'Pool'
+          ? [...upstreamSelectors, ...ADDED_POOL_SELECTORS].sort()
+          : upstreamSelectors;
       expect(selectorsOf(localArtifact(relativePath, name).abi)).to.deep.eq(
-        selectorsOf(upstreamArtifact(relativePath, name).abi),
+        expected,
         `${name} selectors changed`
       );
     }

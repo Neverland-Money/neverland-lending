@@ -144,6 +144,29 @@ library PoolLogic {
   }
 
   /**
+   * @notice Accrues the reserve indexes and treasury share up to the current block
+   * @dev Used to settle the elapsed interval at the prevailing reserve factor before an admin
+   *      changes a parameter (e.g. the reserve factor) that would otherwise re-price that interval.
+   * @param reserve The reserve to settle
+   */
+  function executeSyncIndexesState(DataTypes.ReserveData storage reserve) external {
+    DataTypes.ReserveCache memory reserveCache = reserve.cache();
+    reserve.updateState(reserveCache);
+  }
+
+  /**
+   * @notice Recomputes the reserve interest rates from current state
+   * @dev The per-reserve strategy is read inside `updateInterestRates`).
+   *      Run after a parameter change so the new value governs forward rates.
+   * @param reserve The reserve to refresh
+   * @param asset The address of the underlying asset of the reserve
+   */
+  function executeSyncRatesState(DataTypes.ReserveData storage reserve, address asset) external {
+    DataTypes.ReserveCache memory reserveCache = reserve.cache();
+    reserve.updateInterestRates(reserveCache, asset, 0, 0);
+  }
+
+  /**
    * @notice Returns the user account data across all the reserves
    * @param reservesData The state of all the reserves
    * @param reservesList The addresses of all the active reserves
