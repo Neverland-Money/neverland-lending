@@ -14,12 +14,11 @@ import {IPriceOracleGetter} from '../../../interfaces/IPriceOracleGetter.sol';
  *      `ok` only reports whether `getAssetPrice(asset)` succeeded.
  */
 abstract contract PriceEmitter {
-  /// @dev Unified action codes across Neverland price emitters.
+  /// @dev Action code tagged onto each `PriceObserved` emission; values are immutable for consumers.
   uint8 internal constant ACTION_SUPPLY = 1;
   uint8 internal constant ACTION_BORROW = 2;
   uint8 internal constant ACTION_REPAY = 3;
-  uint8 internal constant ACTION_FLASHLOAN = 4;
-  uint8 internal constant ACTION_FLASHLOAN_SIMPLE = 5;
+  // 4, 5 (flash loans) intentionally unused: not a token-accounting action.
   uint8 internal constant ACTION_LIQUIDATION = 6;
   uint8 internal constant ACTION_WITHDRAW = 7;
   uint8 internal constant ACTION_ATOKEN_TRANSFER = 8;
